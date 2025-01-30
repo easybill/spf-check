@@ -1,0 +1,17 @@
+[package]
+name = "spf-check"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+decon-spf = "0.3.3"
+trust-dns-resolver = { version = "0.23.2", features = ["tokio-runtime"] }
+futures = "0.3.31"
+tokio = { version = "1.43.0", features = ["full"] }
+axum = "0.8.1"
+serde = { version = "1.0.217", features = ["derive"] }
+serde_json = "1.0.138"
+anyhow = "1.0.95"
+http = "1.2.0"
+time = { version = "0.3.37", features = ["formatting"] }
+time-macros = "0.2.19"
