@@ -42,7 +42,7 @@ Response:
 }
 ```
 #### Health Check
-```
+```http request
 GET /health
 ```
 Example:
