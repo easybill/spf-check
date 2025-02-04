@@ -1,6 +1,8 @@
 ### GET request to example server
 GET http://localhost:8080/api/v1/check-spf?domain=ccc.de&target=_spf.easybill.de
 
-###
-
+### GET health
 GET http://localhost:8080/health
+
+### GET metrics
+GET http://localhost:8080/metrics
