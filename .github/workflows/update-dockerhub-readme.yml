@@ -21,9 +21,12 @@ jobs:
             -d '{"username": "'"$DOCKERHUB_USERNAME"'", "password": "'"$DOCKERHUB_TOKEN"'"}' \
             https://hub.docker.com/v2/users/login/ | jq -r .token)
           
+          echo "Preparing README content..."
+          DESCRIPTION=$(jq -Rs . < README.md)
+
           echo "Updating Docker Hub description..."
           curl -s -X PATCH \
             -H "Authorization: JWT $TOKEN" \
             -H "Content-Type: application/json" \
-            --data '{"full_description": "'"$(<README.md)"'"}' \
+            --data '{"full_description": '"$DESCRIPTION"'}' \
             https://hub.docker.com/v2/repositories/easybill/spf-check/
