@@ -143,18 +143,15 @@ impl SpfChecker {
     }
 }
 
-const LOG_TIMESTAMP_FORMAT: &'static str = "%Y-%m-%dT%H:%M:%S%.3f";
+fn log_message(msg: &str) {
+    println!("[{}] {}", chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%.3f"), msg);
+}
 
 async fn check_spf(
     Query(params): Query<SpfCheckParams>,
     checker: axum::extract::State<Arc<SpfChecker>>,
 ) -> impl IntoResponse {
-    println!(
-        "[{}] Request to check \"{}\" for \"{}\"",
-        chrono::Local::now().format(LOG_TIMESTAMP_FORMAT),
-        params.domain,
-        params.target
-    );
+    log_message(&format!("Request to check \"{}\" for \"{}\"", params.domain, params.target));
 
     let start = std::time::Instant::now();
     let mut visited = HashSet::new();
@@ -191,6 +188,15 @@ async fn health() -> impl IntoResponse {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    log_message("  ______________________________       _________ .__                   __    ");
+    log_message(" /   _____/\\______   \\_   _____/       \\_   ___ \\|  |__   ____   ____ |  | __");
+    log_message(" \\_____  \\  |     ___/|    __)  ______ /    \\  \\/|  |  \\_/ __ \\_/ ___\\|  |/ /");
+    log_message(" /        \\ |    |    |     \\  /_____/ \\     \\___|   Y  \\  ___/\\  \\___|    < ");
+    log_message("/_______  / |____|    \\___  /           \\______  /___|  /\\___  >\\___  >__|_ \\");
+    log_message("        \\/                \\/                   \\/     \\/     \\/     \\/     \\/");
+
+    log_message(&format!("> {} v{}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION")));
+
     let checker = Arc::new(SpfChecker::new().await?);
 
     let app = Router::new()
@@ -199,11 +205,8 @@ async fn main() -> Result<()> {
         .with_state(checker);
 
     let addr = SocketAddr::from(([0, 0, 0, 0], 8080));
-    println!(
-        "[{}] Listening on {}",
-        chrono::Local::now().format(LOG_TIMESTAMP_FORMAT),
-        addr
-    );
+
+    log_message(&format!("Listening on {}", addr));
 
     let listener = TcpListener::bind(addr).await?;
     axum::serve(listener, app).await?;
