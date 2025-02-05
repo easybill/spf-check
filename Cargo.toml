@@ -13,3 +13,7 @@ serde = { version = "1.0.217", features = ["derive"] }
 anyhow = "1.0.95"
 http = "1.2.0"
 chrono = "0.4.39"
+
+[profile.release]
+lto = true
+codegen-units = 1
