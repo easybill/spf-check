@@ -1,6 +1,8 @@
 # SPF Check
 
+<!--DESC-->
 A high-performance web service that checks if a target domain is included (directly or indirectly) in another domain's SPF (Sender Policy Framework) record chain.
+<!--DESC-->
 
 ## Features
 
