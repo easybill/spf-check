@@ -22,7 +22,7 @@ jobs:
             https://hub.docker.com/v2/users/login/ | jq -r .token)
 
           echo "Extracting short description from README.md..."
-          DESCRIPTION=$(sed -n '/<!--DESC-->/, /<!--DESC-->/p' README.md | sed 's/<!--DESC-->//g' DESCRIPTION')
+          DESCRIPTION=$(sed -n '/<!--DESC-->/, /<!--DESC-->/p' README.md | sed 's/<!--DESC-->//g' | tr -d '\n' | jq -Rs .)
 
           echo "Preparing README content..."
           FULL_DESCRIPTION=$(jq -Rs . < README.md)
