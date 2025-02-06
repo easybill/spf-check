@@ -1,8 +1,34 @@
-### GET request to example server
-GET http://localhost:8080/api/v1/check-spf?domain=ccc.de&target=_spf.easybill.de
+### GET request to server for easybill.de (positive)
+GET http://localhost:8080/api/v1/check-spf?domain=easybill.de&target=_spf.easybill.de
+
+> {%
+    client.test("Status code is 200", () => client.assert(response.status === 200));
+
+    client.test("Response JSON is valid", () => {
+        client.assert(response.body.found);
+        client.assert(response.body.checked_domains === 1);
+        client.assert(response.body.spf_record.includes('include:_spf.easybill.de'));
+        client.assert(response.body.included_domains.length === 4);
+    });
+%}
+
+### GET request to server for google.com (negative)
+GET http://localhost:8080/api/v1/check-spf?domain=google.com&target=_spf.easybill.de
+
+> {%
+    client.test("Status code is 200", () => client.assert(response.status === 200));
+
+    client.test("Response JSON is valid", () => {
+        client.assert(!response.body.found);
+        client.assert(response.body.checked_domains === 1);
+        client.assert(response.body.spf_record === "v=spf1 include:_spf.google.com ~all");
+        client.assert(response.body.included_domains.length === 1 && response.body.included_domains[0] === "_spf.google.com");
+    });
+%}
 
 ### GET health
 GET http://localhost:8080/health
 
-### GET metrics
-GET http://localhost:8080/metrics
+> {%
+    client.test("Status code is 200", () => client.assert(response.status === 200));
+%}
