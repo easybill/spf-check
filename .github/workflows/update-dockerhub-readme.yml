@@ -31,5 +31,5 @@ jobs:
           curl -s -X PATCH \
             -H "Authorization: JWT $TOKEN" \
             -H "Content-Type: application/json" \
-            --data '{"full_description": '$FULL_DESCRIPTION', "description": '$DESCRIPTION'}' \
+            --data '{"full_description": '"$FULL_DESCRIPTION"', "description": '"$DESCRIPTION"'}' \
             https://hub.docker.com/v2/repositories/easybill/spf-check/
