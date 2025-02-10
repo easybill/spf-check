@@ -19,6 +19,7 @@ use trust_dns_resolver::TokioAsyncResolver;
 #[derive(Debug, Clone)]
 struct SpfChecker {
     resolver: Arc<TokioAsyncResolver>,
+    max_depth: usize,
 }
 
 #[derive(Debug, Deserialize)]
@@ -46,11 +47,15 @@ struct ErrorResponse {
 
 impl SpfChecker {
     async fn new() -> Result<Self> {
-        let resolver =
-            TokioAsyncResolver::tokio(ResolverConfig::default(), ResolverOpts::default());
+        let mut opts = ResolverOpts::default();
+        opts.timeout = std::time::Duration::from_secs(2);
+        opts.attempts = 2;
+
+        let resolver = TokioAsyncResolver::tokio(ResolverConfig::default(), opts);
 
         Ok(Self {
             resolver: Arc::new(resolver),
+            max_depth: 10,
         })
     }
 
@@ -77,6 +82,15 @@ impl SpfChecker {
         target: String,
         visited: &mut HashSet<String>,
     ) -> Result<(bool, Option<String>, Option<Vec<String>>)> {
+        if visited.len() >= self.max_depth {
+            log_message(&format!(
+                "Maximum recursion depth of {} reached. Visited domains: {:?}",
+                self.max_depth,
+                visited.iter().collect::<Vec<_>>()
+            ));
+            return Ok((false, None, None));
+        }
+
         if !visited.insert(domain.clone()) {
             return Ok((false, None, None));
         }
@@ -151,8 +165,6 @@ async fn check_spf(
     Query(params): Query<SpfCheckParams>,
     checker: axum::extract::State<Arc<SpfChecker>>,
 ) -> impl IntoResponse {
-    log_message(&format!("Request to check \"{}\" for \"{}\"", params.domain, params.target));
-
     let start = std::time::Instant::now();
     let mut visited = HashSet::new();
 
@@ -161,12 +173,20 @@ async fn check_spf(
         .await
     {
         Ok((found, spf_record, included_domains)) => {
+            let elapsed_ms = start.elapsed().as_millis() as u64;
+            log_message(&format!(
+                "Successfully checked \"{}\" for \"{}\" ({}ms)",
+                params.domain,
+                params.target,
+                elapsed_ms
+            ));
+
             let response = SpfCheckResponse {
                 found,
                 checked_domains: visited.len(),
                 domain: params.domain,
                 target: params.target,
-                elapsed_ms: start.elapsed().as_millis() as u64,
+                elapsed_ms,
                 has_spf_record: spf_record.is_some(),
                 spf_record,
                 included_domains,
@@ -174,6 +194,15 @@ async fn check_spf(
             (StatusCode::OK, Json(response)).into_response()
         }
         Err(err) => {
+            let elapsed_ms = start.elapsed().as_millis() as u64;
+            log_message(&format!(
+                "Failed to check \"{}\" for \"{}\": {} ({}ms)",
+                params.domain,
+                params.target,
+                err,
+                elapsed_ms
+            ));
+
             let error = ErrorResponse {
                 error: err.to_string(),
             };
