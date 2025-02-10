@@ -39,5 +39,7 @@ COPY --from=builder /usr/src/app/target/*/release/spf-check /spf-check
 
 EXPOSE 8080
 
+USER 1337
+
 # Set the startup command to run our binary
 CMD ["/spf-check"]
