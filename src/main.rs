@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use axum::http::header;
 use axum::{
     extract::Query,
     http::StatusCode,
@@ -215,6 +216,14 @@ async fn health() -> impl IntoResponse {
     StatusCode::OK
 }
 
+async fn serve_ui() -> impl IntoResponse {
+    (
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
+        include_str!("ui.html"),
+    )
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     log_message("  ______________________________       _________ .__                   __    ");
@@ -231,6 +240,7 @@ async fn main() -> Result<()> {
     let app = Router::new()
         .route("/health", get(health))
         .route("/api/v1/check-spf", get(check_spf))
+        .route("/ui", get(serve_ui))
         .with_state(checker);
 
     let addr = SocketAddr::from(([0, 0, 0, 0], 8080));

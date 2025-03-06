@@ -1,0 +1,553 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SPF Record Checker</title>
+    <style>
+        :root {
+            --bg-primary: #121212;
+            --bg-secondary: #1e1e1e;
+            --bg-tertiary: #2a2a2a;
+            --text-primary: #e0e0e0;
+            --text-secondary: #a0a0a0;
+            --accent: #7c4dff;
+            --accent-hover: #9670ff;
+            --success: #4caf50;
+            --error: #f44336;
+            --warning: #ff9800;
+            --border-radius: 8px;
+            --shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+            --transition: all 0.3s ease;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+            background-color: var(--bg-primary);
+            color: var(--text-primary);
+            line-height: 1.6;
+            padding: 2rem;
+            min-height: 100vh;
+        }
+
+        header {
+            margin-bottom: 2rem;
+            text-align: center;
+        }
+
+        h1 {
+            font-size: 2.5rem;
+            margin-bottom: 0.5rem;
+            background: linear-gradient(90deg, var(--accent), #b388ff);
+            -webkit-background-clip: text;
+            background-clip: text;
+            color: transparent;
+        }
+
+        .subtitle {
+            color: var(--text-secondary);
+            font-size: 1.1rem;
+        }
+
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+        }
+
+        .card {
+            background-color: var(--bg-secondary);
+            border-radius: var(--border-radius);
+            padding: 2rem;
+            box-shadow: var(--shadow);
+            margin-bottom: 2rem;
+        }
+
+        .form-group {
+            margin-bottom: 1.5rem;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 0.5rem;
+            font-weight: 500;
+        }
+
+        input[type="text"] {
+            width: 100%;
+            padding: 0.75rem 1rem;
+            background-color: var(--bg-tertiary);
+            border: 1px solid #444;
+            border-radius: var(--border-radius);
+            color: var(--text-primary);
+            font-size: 1rem;
+            transition: var(--transition);
+        }
+
+        input[type="text"]:focus {
+            outline: none;
+            border-color: var(--accent);
+            box-shadow: 0 0 0 2px rgba(124, 77, 255, 0.2);
+        }
+
+        button {
+            background-color: var(--accent);
+            color: white;
+            border: none;
+            border-radius: var(--border-radius);
+            padding: 0.75rem 1.5rem;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: var(--transition);
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        button:hover {
+            background-color: var(--accent-hover);
+            transform: translateY(-2px);
+        }
+
+        button:disabled {
+            background-color: #555;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        button svg {
+            margin-right: 0.5rem;
+        }
+
+        .loading {
+            display: inline-block;
+            width: 1.5rem;
+            height: 1.5rem;
+            border: 3px solid rgba(255, 255, 255, 0.3);
+            border-radius: 50%;
+            border-top-color: white;
+            animation: spin 1s ease-in-out infinite;
+            margin-right: 0.5rem;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .result {
+            display: none;
+            margin-top: 2rem;
+        }
+
+        .result-header {
+            display: flex;
+            align-items: center;
+            margin-bottom: 1.5rem;
+        }
+
+        .result-title {
+            margin-left: 1rem;
+            font-size: 1.5rem;
+        }
+
+        .result-icon {
+            width: 2.5rem;
+            height: 2.5rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 50%;
+        }
+
+        .result-icon.success {
+            background-color: rgba(76, 175, 80, 0.2);
+            color: var(--success);
+        }
+
+        .result-icon.error {
+            background-color: rgba(244, 67, 54, 0.2);
+            color: var(--error);
+        }
+
+        .result-icon.warning {
+            background-color: rgba(255, 152, 0, 0.2);
+            color: var(--warning);
+        }
+
+        .result-summary {
+            background-color: var(--bg-tertiary);
+            border-radius: var(--border-radius);
+            padding: 1.5rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .summary-item {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 0.75rem;
+            padding-bottom: 0.75rem;
+            border-bottom: 1px solid #444;
+        }
+
+        .summary-item:last-child {
+            margin-bottom: 0;
+            padding-bottom: 0;
+            border-bottom: none;
+        }
+
+        .summary-label {
+            color: var(--text-secondary);
+        }
+
+        .summary-value {
+            font-weight: 500;
+        }
+
+        .summary-value.success {
+            color: var(--success);
+        }
+
+        .summary-value.error {
+            color: var(--error);
+        }
+
+        .details-section {
+            margin-top: 1.5rem;
+        }
+
+        .details-title {
+            font-size: 1.2rem;
+            margin-bottom: 1rem;
+            display: flex;
+            align-items: center;
+        }
+
+        .details-title svg {
+            margin-right: 0.5rem;
+        }
+
+        .spf-record {
+            background-color: var(--bg-tertiary);
+            border-radius: var(--border-radius);
+            padding: 1rem;
+            font-family: 'Courier New', Courier, monospace;
+            overflow-x: auto;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+
+        .domains-list {
+            list-style: none;
+            background-color: var(--bg-tertiary);
+            border-radius: var(--border-radius);
+            padding: 1rem;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+
+        .domains-list li {
+            padding: 0.5rem;
+            border-bottom: 1px solid #444;
+        }
+
+        .domains-list li:last-child {
+            border-bottom: none;
+        }
+
+        .target-match {
+            color: var(--accent);
+            font-weight: bold;
+        }
+
+        .error-message {
+            background-color: rgba(244, 67, 54, 0.1);
+            border-left: 4px solid var(--error);
+            padding: 1rem;
+            border-radius: var(--border-radius);
+            margin-top: 1rem;
+        }
+
+        .fade-in {
+            animation: fadeIn 0.5s ease-in-out;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        footer {
+            text-align: center;
+            margin-top: 3rem;
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+        }
+
+        @media (max-width: 768px) {
+            body {
+                padding: 1rem;
+            }
+
+            .card {
+                padding: 1.5rem;
+            }
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+    <header>
+        <h1>SPF Record Checker</h1>
+        <p class="subtitle">Verify if a domain includes a specific SPF target</p>
+    </header>
+
+    <div class="card">
+        <form id="spfForm">
+            <div class="form-group">
+                <label for="domain">Domain to check:</label>
+                <input type="text" id="domain" name="domain" placeholder="example.com" required>
+            </div>
+            <div class="form-group">
+                <label for="target">Target domain to find:</label>
+                <input type="text" id="target" name="target" placeholder="spf.easybill-mail.de" list="targetOptions" required>
+                <datalist id="targetOptions">
+                    <option value="spf.easybill-mail.de">
+                </datalist>
+            </div>
+            <button type="submit" id="checkButton">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="11" cy="11" r="8"></circle>
+                    <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                </svg>
+                Check SPF Record
+            </button>
+        </form>
+    </div>
+
+    <div id="result" class="card result">
+        <div class="result-header">
+            <div id="resultIcon" class="result-icon">
+                <!-- Icon will be inserted here -->
+            </div>
+            <h2 id="resultTitle" class="result-title">Results</h2>
+        </div>
+
+        <div class="result-summary">
+            <div class="summary-item">
+                <span class="summary-label">Domain</span>
+                <span id="resultDomain" class="summary-value"></span>
+            </div>
+            <div class="summary-item">
+                <span class="summary-label">Target</span>
+                <span id="resultTarget" class="summary-value"></span>
+            </div>
+            <div class="summary-item">
+                <span class="summary-label">Target Found</span>
+                <span id="resultFound" class="summary-value"></span>
+            </div>
+            <div class="summary-item">
+                <span class="summary-label">Domains Checked</span>
+                <span id="resultDomainsChecked" class="summary-value"></span>
+            </div>
+            <div class="summary-item">
+                <span class="summary-label">Has SPF Record</span>
+                <span id="resultHasSpf" class="summary-value"></span>
+            </div>
+            <div class="summary-item">
+                <span class="summary-label">Time Taken</span>
+                <span id="resultTime" class="summary-value"></span>
+            </div>
+        </div>
+
+        <div id="spfRecordSection" class="details-section">
+            <h3 class="details-title">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                    <polyline points="14 2 14 8 20 8"></polyline>
+                    <line x1="16" y1="13" x2="8" y2="13"></line>
+                    <line x1="16" y1="17" x2="8" y2="17"></line>
+                    <polyline points="10 9 9 9 8 9"></polyline>
+                </svg>
+                SPF Record
+            </h3>
+            <pre id="spfRecord" class="spf-record"></pre>
+        </div>
+
+        <div id="includedDomainsSection" class="details-section">
+            <h3 class="details-title">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="8" y1="6" x2="21" y2="6"></line>
+                    <line x1="8" y1="12" x2="21" y2="12"></line>
+                    <line x1="8" y1="18" x2="21" y2="18"></line>
+                    <line x1="3" y1="6" x2="3.01" y2="6"></line>
+                    <line x1="3" y1="12" x2="3.01" y2="12"></line>
+                    <line x1="3" y1="18" x2="3.01" y2="18"></line>
+                </svg>
+                Included Domains
+            </h3>
+            <ul id="includedDomains" class="domains-list"></ul>
+        </div>
+
+        <div id="errorSection" class="error-message" style="display: none;">
+            <strong>Error:</strong> <span id="errorMessage"></span>
+        </div>
+    </div>
+</div>
+
+<footer>
+    <p>SPF Checker &copy; 2025 | A tool for verifying SPF record inclusions</p>
+</footer>
+
+<script>
+    document.addEventListener('DOMContentLoaded', () => {
+        const form = document.getElementById('spfForm');
+        const checkButton = document.getElementById('checkButton');
+        const resultSection = document.getElementById('result');
+        const errorSection = document.getElementById('errorSection');
+        const spfRecordSection = document.getElementById('spfRecordSection');
+        const includedDomainsSection = document.getElementById('includedDomainsSection');
+
+        // Set focus on domain input
+        document.getElementById('domain').focus();
+
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            const domain = document.getElementById('domain').value.trim();
+            const target = document.getElementById('target').value.trim();
+
+            if (!domain) {
+                showError('Please enter a domain to check');
+                return;
+            }
+
+            if (!target) {
+                showError('Please enter a target domain to find');
+                return;
+            }
+
+            // Show loading state
+            checkButton.disabled = true;
+            checkButton.innerHTML = '<div class="loading"></div> Checking...';
+
+            // Hide previous results
+            resultSection.style.display = 'none';
+            errorSection.style.display = 'none';
+
+            try {
+                const response = await fetch(`http://localhost:8080/api/v1/check-spf?domain=${encodeURIComponent(domain)}&target=${encodeURIComponent(target)}`);
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.error || 'Failed to check SPF record');
+                }
+
+                displayResults(data);
+            } catch (error) {
+                showError(error.message || 'Failed to connect to the SPF checker service');
+            } finally {
+                // Reset button state
+                checkButton.disabled = false;
+                checkButton.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg> Check SPF Record';
+            }
+        });
+
+        function displayResults(data) {
+            // Set result icon and title
+            const resultIcon = document.getElementById('resultIcon');
+            const resultTitle = document.getElementById('resultTitle');
+
+            if (data.found) {
+                resultIcon.className = 'result-icon success';
+                resultIcon.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>';
+                resultTitle.textContent = 'Target Found!';
+            } else if (data.has_spf_record) {
+                resultIcon.className = 'result-icon warning';
+                resultIcon.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>';
+                resultTitle.textContent = 'Target Not Found';
+            } else {
+                resultIcon.className = 'result-icon error';
+                resultIcon.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="15" y1="9" x2="9" y2="15"></line><line x1="9" y1="9" x2="15" y2="15"></line></svg>';
+                resultTitle.textContent = 'No SPF Record Found';
+            }
+
+            // Set summary values
+            document.getElementById('resultDomain').textContent = data.domain;
+            document.getElementById('resultTarget').textContent = data.target;
+
+            const resultFound = document.getElementById('resultFound');
+            resultFound.textContent = data.found ? 'Yes' : 'No';
+            resultFound.className = data.found ? 'summary-value success' : 'summary-value error';
+
+            document.getElementById('resultDomainsChecked').textContent = data.checked_domains;
+
+            const resultHasSpf = document.getElementById('resultHasSpf');
+            resultHasSpf.textContent = data.has_spf_record ? 'Yes' : 'No';
+            resultHasSpf.className = data.has_spf_record ? 'summary-value success' : 'summary-value error';
+
+            document.getElementById('resultTime').textContent = `${data.elapsed_ms} ms`;
+
+            // Display SPF record if available
+            if (data.spf_record) {
+                document.getElementById('spfRecord').textContent = data.spf_record;
+                spfRecordSection.style.display = 'block';
+            } else {
+                spfRecordSection.style.display = 'none';
+            }
+
+            // Display included domains if available
+            const includedDomainsList = document.getElementById('includedDomains');
+            includedDomainsList.innerHTML = '';
+
+            if (data.included_domains && data.included_domains.length > 0) {
+                data.included_domains.forEach(domain => {
+                    const li = document.createElement('li');
+                    if (domain === data.target) {
+                        li.innerHTML = `<span class="target-match">${domain}</span> ✓`;
+                    } else {
+                        li.textContent = domain;
+                    }
+                    includedDomainsList.appendChild(li);
+                });
+                includedDomainsSection.style.display = 'block';
+            } else {
+                includedDomainsSection.style.display = 'none';
+            }
+
+            // Show result section with animation
+            resultSection.style.display = 'block';
+            resultSection.classList.add('fade-in');
+
+            // Scroll to results
+            resultSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+
+        function showError(message) {
+            document.getElementById('errorMessage').textContent = message;
+            errorSection.style.display = 'block';
+            resultSection.style.display = 'block';
+            spfRecordSection.style.display = 'none';
+            includedDomainsSection.style.display = 'none';
+
+            // Set error icon and title
+            const resultIcon = document.getElementById('resultIcon');
+            resultIcon.className = 'result-icon error';
+            resultIcon.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="15" y1="9" x2="9" y2="15"></line><line x1="9" y1="9" x2="15" y2="15"></line></svg>';
+            document.getElementById('resultTitle').textContent = 'Error';
+
+            // Show result section with animation
+            resultSection.classList.add('fade-in');
+
+            // Scroll to results
+            resultSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+    });
+</script>
+</body>
+</html>
