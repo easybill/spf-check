@@ -7,6 +7,7 @@ use axum::{
     Router,
 };
 use decon_spf::Spf;
+use futures::future::BoxFuture;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::net::SocketAddr;
@@ -76,84 +77,112 @@ impl SpfChecker {
         }))
     }
 
-    async fn check(
-        &self,
+    fn check<'a>(
+        &'a self,
         domain: String,
         target: String,
-        visited: &mut HashSet<String>,
-    ) -> Result<(bool, Option<String>, Option<Vec<String>>)> {
-        if visited.len() >= self.max_depth {
-            log_message(&format!(
-                "Maximum recursion depth of {} reached. Visited domains: {:?}",
-                self.max_depth,
-                visited.iter().collect::<Vec<_>>()
-            ));
-            return Ok((false, None, None));
-        }
-
-        if !visited.insert(domain.clone()) {
-            return Ok((false, None, None));
-        }
-
-        let spf_txt = self.get_spf(&domain).await?;
-
-        let Some(spf_txt) = spf_txt else {
-            return Ok((false, None, None));
-        };
-
-        let spf = Spf::from_str(&spf_txt).context("SPF_PARSE_FAILED")?;
-
-        let includes: Vec<String> = spf
-            .iter()
-            .filter(|m| m.kind().is_include())
-            .map(|m| m.raw())
-            .collect();
-
-        if visited.len() == 1 {
-            if includes.contains(&target) {
-                return Ok((true, Some(spf_txt), Some(includes)));
+        visited: &'a mut HashSet<String>,
+    ) -> BoxFuture<'a, Result<(bool, Option<String>, Option<Vec<String>>)>> {
+        Box::pin(async move {
+            if visited.len() >= self.max_depth {
+                log_message(&format!(
+                    "Maximum recursion depth of {} reached. Visited domains: {:?}",
+                    self.max_depth,
+                    visited.iter().collect::<Vec<_>>()
+                ));
+                return Ok((false, None, None));
             }
 
-            let futures: Vec<_> = includes
+            if !visited.insert(domain.clone()) {
+                return Ok((false, None, None));
+            }
+
+            let spf_txt = self.get_spf(&domain).await?;
+
+            let Some(spf_txt) = spf_txt else {
+                return Ok((false, None, None));
+            };
+
+            let spf = Spf::from_str(&spf_txt).context("SPF_PARSE_FAILED")?;
+
+            let includes: Vec<String> = spf
                 .iter()
+                .filter(|m| m.kind().is_include())
+                .map(|m| m.raw())
+                .collect();
+
+            // Extract redirect domain if present
+            let redirect = spf
+                .iter()
+                .find(|m| m.raw().starts_with("redirect="))
+                .map(|m| m.raw().trim_start_matches("redirect=").to_string());
+
+            if visited.len() == 1 {
+                // Check if target is directly in the includes
+                if includes.contains(&target) {
+                    return Ok((true, Some(spf_txt), Some(includes)));
+                }
+
+                // Check includes recursively
+                let futures: Vec<_> = includes
+                    .iter()
+                    .map(|include| {
+                        let checker = self.clone();
+                        let target = target.clone();
+                        let visited = visited.clone();
+                        async move {
+                            checker
+                                .check(include.clone(), target, &mut visited.clone())
+                                .await
+                        }
+                    })
+                    .collect();
+
+                let results = futures::future::join_all(futures).await;
+                let found = results.iter().any(|r| r.as_ref().unwrap_or(&(false, None, None)).0);
+
+                // If not found and there's a redirect, check the redirect domain
+                if !found && redirect.is_some() {
+                    let redirect_domain = redirect.unwrap();
+                    let redirect_result = self.check(redirect_domain, target, visited).await?;
+                    if redirect_result.0 {
+                        return Ok((true, Some(spf_txt), Some(includes)));
+                    }
+                }
+
+                return Ok((found, Some(spf_txt), Some(includes)));
+            }
+
+            // For nested levels, check immediate includes first
+            if includes.contains(&target) {
+                return Ok((true, None, None));
+            }
+
+            // Check nested includes
+            let includes_futures: Vec<_> = includes
+                .into_iter()
                 .map(|include| {
                     let checker = self.clone();
                     let target = target.clone();
                     let visited = visited.clone();
-                    async move {
-                        checker
-                            .check(include.clone(), target, &mut visited.clone())
-                            .await
-                    }
+                    async move { checker.check(include, target, &mut visited.clone()).await }
                 })
                 .collect();
 
-            let results = futures::future::join_all(futures).await;
-            let found = results.into_iter().any(|r| r.unwrap_or_default().0);
+            let includes_results = futures::future::join_all(includes_futures).await;
+            let found_in_includes = includes_results.iter().any(|r| r.as_ref().unwrap_or(&(false, None, None)).0);
 
-            return Ok((found, Some(spf_txt), Some(includes)));
-        }
+            if found_in_includes {
+                return Ok((true, None, None));
+            }
 
-        if includes.contains(&target) {
-            return Ok((true, None, None));
-        }
+            // If nothing found in includes and there's a redirect, check it
+            if let Some(redirect_domain) = redirect {
+                return self.check(redirect_domain, target, visited).await;
+            }
 
-        let futures: Vec<_> = includes
-            .into_iter()
-            .map(|include| {
-                let checker = self.clone();
-                let target = target.clone();
-                let visited = visited.clone();
-                async move { checker.check(include, target, &mut visited.clone()).await }
-            })
-            .collect();
-
-        let results = futures::future::join_all(futures).await;
-        Ok((
-            results.into_iter().any(|r| r.unwrap_or_default().0),
-            None,
-            None,
-        ))
+            Ok((false, None, None))
+        })
     }
 }
 
