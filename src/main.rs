@@ -1,4 +1,6 @@
 use anyhow::{Context, Result};
+use axum::extract::State;
+use axum::response::Response;
 use axum::{
     extract::Query,
     http::StatusCode,
@@ -7,7 +9,6 @@ use axum::{
     Router,
 };
 use decon_spf::Spf;
-use futures::future::BoxFuture;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::net::SocketAddr;
@@ -16,6 +17,9 @@ use std::sync::Arc;
 use tokio::net::TcpListener;
 use trust_dns_resolver::config::{ResolverConfig, ResolverOpts};
 use trust_dns_resolver::TokioAsyncResolver;
+
+static CARGO_PKG_NAME: &str = env!("CARGO_PKG_NAME");
+static CARGO_PKG_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[derive(Debug, Clone)]
 struct SpfChecker {
@@ -46,18 +50,25 @@ struct ErrorResponse {
     error: String,
 }
 
+struct CheckResult {
+    found: bool,
+    visited: usize,
+    spf_record: Option<String>,
+    included_domains: Option<Vec<String>>,
+}
+
 impl SpfChecker {
-    async fn new() -> Result<Self> {
+    fn new() -> Self {
         let mut opts = ResolverOpts::default();
         opts.timeout = std::time::Duration::from_secs(2);
         opts.attempts = 2;
 
         let resolver = TokioAsyncResolver::tokio(ResolverConfig::default(), opts);
 
-        Ok(Self {
+        Self {
             resolver: Arc::new(resolver),
             max_depth: 10,
-        })
+        }
     }
 
     async fn get_spf(&self, domain: &str) -> Result<Option<String>> {
@@ -68,39 +79,36 @@ impl SpfChecker {
             .context("DNS_LOOKUP_FAILED")?;
 
         Ok(response.iter().find_map(|record| {
-            let txt = record
-                .txt_data()
-                .iter()
-                .map(|bytes| String::from_utf8_lossy(bytes))
-                .collect::<String>();
+            let txt = record.to_string();
             txt.starts_with("v=spf1").then_some(txt)
         }))
     }
 
-    fn check<'a>(
-        &'a self,
-        domain: String,
-        target: String,
-        visited: &'a mut HashSet<String>,
-    ) -> BoxFuture<'a, Result<(bool, Option<String>, Option<Vec<String>>)>> {
-        Box::pin(async move {
+    async fn check(&self, root_domain: &String, target: &String) -> Result<CheckResult> {
+        let mut to_visit = vec![root_domain.to_owned()];
+        let mut visited = HashSet::new();
+
+        let mut root_spf_record = None;
+        let mut root_includes = None;
+
+        while let Some(current_domain) = to_visit.pop() {
             if visited.len() >= self.max_depth {
-                log_message(&format!(
+                log_message(format!(
                     "Maximum recursion depth of {} reached. Visited domains: {:?}",
                     self.max_depth,
                     visited.iter().collect::<Vec<_>>()
                 ));
-                return Ok((false, None, None));
+                break;
             }
 
-            if !visited.insert(domain.clone()) {
-                return Ok((false, None, None));
+            if visited.contains(&current_domain) {
+                // Already visited
+                continue;
             }
+            visited.insert(current_domain.clone());
 
-            let spf_txt = self.get_spf(&domain).await?;
-
-            let Some(spf_txt) = spf_txt else {
-                return Ok((false, None, None));
+            let Some(spf_txt) = self.get_spf(&current_domain).await? else {
+                continue;
             };
 
             let spf = Spf::from_str(&spf_txt).context("SPF_PARSE_FAILED")?;
@@ -111,108 +119,76 @@ impl SpfChecker {
                 .map(|m| m.raw())
                 .collect();
 
-            // Extract redirect domain if present
             let redirect = spf
                 .iter()
-                .find(|m| m.raw().starts_with("redirect="))
-                .map(|m| m.raw().trim_start_matches("redirect=").to_string());
+                .map(|m| m.raw())
+                .find(|raw| raw.starts_with("redirect="))
+                .map(|raw| raw.trim_start_matches("redirect=").to_string());
 
-            if visited.len() == 1 {
-                // Check if target is directly in the includes
-                if includes.contains(&target) {
-                    return Ok((true, Some(spf_txt), Some(includes)));
-                }
-
-                // Check includes recursively
-                let futures: Vec<_> = includes
-                    .iter()
-                    .map(|include| {
-                        let checker = self.clone();
-                        let target = target.clone();
-                        let visited = visited.clone();
-                        async move {
-                            checker
-                                .check(include.clone(), target, &mut visited.clone())
-                                .await
-                        }
-                    })
-                    .collect();
-
-                let results = futures::future::join_all(futures).await;
-                let found = results.iter().any(|r| r.as_ref().unwrap_or(&(false, None, None)).0);
-
-                // If not found and there's a redirect, check the redirect domain
-                if !found && redirect.is_some() {
-                    let redirect_domain = redirect.unwrap();
-                    let redirect_result = self.check(redirect_domain, target, visited).await?;
-                    if redirect_result.0 {
-                        return Ok((true, Some(spf_txt), Some(includes)));
-                    }
-                }
-
-                return Ok((found, Some(spf_txt), Some(includes)));
+            if root_domain == &current_domain {
+                // Save root domain information
+                root_spf_record = Some(spf_txt);
+                root_includes = Some(includes.clone());
             }
 
-            // For nested levels, check immediate includes first
-            if includes.contains(&target) {
-                return Ok((true, None, None));
+            if includes.contains(target) {
+                // Target found
+                return Ok(CheckResult {
+                    found: true,
+                    visited: visited.len(),
+                    spf_record: root_spf_record,
+                    included_domains: root_includes,
+                });
             }
 
-            // Check nested includes
-            let includes_futures: Vec<_> = includes
-                .into_iter()
-                .map(|include| {
-                    let checker = self.clone();
-                    let target = target.clone();
-                    let visited = visited.clone();
-                    async move { checker.check(include, target, &mut visited.clone()).await }
-                })
-                .collect();
+            to_visit.extend(includes);
 
-            let includes_results = futures::future::join_all(includes_futures).await;
-            let found_in_includes = includes_results.iter().any(|r| r.as_ref().unwrap_or(&(false, None, None)).0);
-
-            if found_in_includes {
-                return Ok((true, None, None));
-            }
-
-            // If nothing found in includes and there's a redirect, check it
             if let Some(redirect_domain) = redirect {
-                return self.check(redirect_domain, target, visited).await;
+                to_visit.push(redirect_domain);
             }
+        }
 
-            Ok((false, None, None))
+        // Target not found in any domain
+        Ok(CheckResult {
+            found: false,
+            visited: visited.len(),
+            spf_record: root_spf_record,
+            included_domains: root_includes,
         })
     }
 }
 
-fn log_message(msg: &str) {
-    println!("[{}] {}", chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%.3f"), msg);
+fn log_message(msg: impl AsRef<str>) {
+    println!(
+        "[{}] {}",
+        chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%.3f"),
+        msg.as_ref()
+    );
 }
 
 async fn check_spf(
     Query(params): Query<SpfCheckParams>,
-    checker: axum::extract::State<Arc<SpfChecker>>,
-) -> impl IntoResponse {
+    checker: State<Arc<SpfChecker>>,
+) -> Response {
     let start = std::time::Instant::now();
-    let mut visited = HashSet::new();
 
-    match checker
-        .check(params.domain.clone(), params.target.clone(), &mut visited)
-        .await
-    {
-        Ok((found, spf_record, included_domains)) => {
+    match checker.check(&params.domain, &params.target).await {
+        Ok(CheckResult {
+            found,
+            visited,
+            spf_record,
+            included_domains,
+        }) => {
             let elapsed_ms = start.elapsed().as_millis() as u64;
-            log_message(&format!(
+
+            log_message(format!(
                 "Successfully checked \"{}\" for \"{}\" ({}ms)",
-                params.domain,
-                params.target,
-                elapsed_ms
+                params.domain, params.target, elapsed_ms
             ));
 
             let response = SpfCheckResponse {
                 found,
-                checked_domains: visited.len(),
+                checked_domains: visited,
                 domain: params.domain,
                 target: params.target,
                 elapsed_ms,
@@ -220,42 +196,37 @@ async fn check_spf(
                 spf_record,
                 included_domains,
             };
+
             (StatusCode::OK, Json(response)).into_response()
         }
         Err(err) => {
             let elapsed_ms = start.elapsed().as_millis() as u64;
-            log_message(&format!(
+
+            log_message(format!(
                 "Failed to check \"{}\" for \"{}\": {} ({}ms)",
-                params.domain,
-                params.target,
-                err,
-                elapsed_ms
+                params.domain, params.target, err, elapsed_ms
             ));
 
             let error = ErrorResponse {
                 error: err.to_string(),
             };
+
             (StatusCode::NOT_FOUND, Json(error)).into_response()
         }
     }
 }
 
-async fn health() -> impl IntoResponse {
+async fn health() -> StatusCode {
     StatusCode::OK
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    log_message("  ______________________________       _________ .__                   __    ");
-    log_message(" /   _____/\\______   \\_   _____/       \\_   ___ \\|  |__   ____   ____ |  | __");
-    log_message(" \\_____  \\  |     ___/|    __)  ______ /    \\  \\/|  |  \\_/ __ \\_/ ___\\|  |/ /");
-    log_message(" /        \\ |    |    |     \\  /_____/ \\     \\___|   Y  \\  ___/\\  \\___|    < ");
-    log_message("/_______  / |____|    \\___  /           \\______  /___|  /\\___  >\\___  >__|_ \\");
-    log_message("        \\/                \\/                   \\/     \\/     \\/     \\/     \\/");
+    print_logo();
 
-    log_message(&format!("> {} v{}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION")));
+    log_message(format!("> {CARGO_PKG_NAME} v{CARGO_PKG_VERSION}"));
 
-    let checker = Arc::new(SpfChecker::new().await?);
+    let checker = Arc::new(SpfChecker::new());
 
     let app = Router::new()
         .route("/health", get(health))
@@ -264,10 +235,20 @@ async fn main() -> Result<()> {
 
     let addr = SocketAddr::from(([0, 0, 0, 0], 8080));
 
-    log_message(&format!("Listening on {}", addr));
+    log_message(format!("Listening on {}", addr));
 
     let listener = TcpListener::bind(addr).await?;
     axum::serve(listener, app).await?;
 
     Ok(())
+}
+
+#[rustfmt::skip]
+fn print_logo() {
+    log_message("  ______________________________       _________ .__                   __");
+    log_message(" /   _____/\\______   \\_   _____/       \\_   ___ \\|  |__   ____   ____ |  | __");
+    log_message(" \\_____  \\  |     ___/|    __)  ______ /    \\  \\/|  |  \\_/ __ \\_/ ___\\|  |/ /");
+    log_message(" /        \\ |    |    |     \\  /_____/ \\     \\___|   Y  \\  ___/\\  \\___|    <");
+    log_message("/_______  / |____|    \\___  /           \\______  /___|  /\\___  >\\___  >__|_ \\");
+    log_message("        \\/                \\/                   \\/     \\/     \\/     \\/     \\/");
 }
