@@ -1,4 +1,6 @@
-use anyhow::{Context, Result};
+mod spf_checker;
+
+use anyhow::{Result};
 use axum::extract::State;
 use axum::response::Response;
 use axum::{
@@ -8,24 +10,16 @@ use axum::{
     routing::get,
     Router,
 };
-use decon_spf::Spf;
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
 use std::net::SocketAddr;
-use std::str::FromStr;
-use std::sync::Arc;
 use tokio::net::TcpListener;
 use trust_dns_resolver::config::{ResolverConfig, ResolverOpts};
 use trust_dns_resolver::TokioAsyncResolver;
+use crate::spf_checker::{CheckResult, SpfChecker};
 
 static CARGO_PKG_NAME: &str = env!("CARGO_PKG_NAME");
 static CARGO_PKG_VERSION: &str = env!("CARGO_PKG_VERSION");
 
-#[derive(Debug, Clone)]
-struct SpfChecker {
-    resolver: Arc<TokioAsyncResolver>,
-    max_depth: usize,
-}
 
 #[derive(Debug, Deserialize)]
 struct SpfCheckParams {
@@ -50,114 +44,6 @@ struct ErrorResponse {
     error: String,
 }
 
-struct CheckResult {
-    found: bool,
-    visited: usize,
-    spf_record: Option<String>,
-    included_domains: Option<Vec<String>>,
-}
-
-impl SpfChecker {
-    fn new() -> Self {
-        let mut opts = ResolverOpts::default();
-        opts.timeout = std::time::Duration::from_secs(2);
-        opts.attempts = 2;
-
-        let resolver = TokioAsyncResolver::tokio(ResolverConfig::default(), opts);
-
-        Self {
-            resolver: Arc::new(resolver),
-            max_depth: 10,
-        }
-    }
-
-    async fn get_spf(&self, domain: &str) -> Result<Option<String>> {
-        let response = self
-            .resolver
-            .txt_lookup(domain)
-            .await
-            .context("DNS_LOOKUP_FAILED")?;
-
-        Ok(response.iter().find_map(|record| {
-            let txt = record.to_string();
-            txt.starts_with("v=spf1").then_some(txt)
-        }))
-    }
-
-    async fn check(&self, root_domain: &String, target: &String) -> Result<CheckResult> {
-        let mut to_visit = vec![root_domain.to_owned()];
-        let mut visited = HashSet::new();
-
-        let mut root_spf_record = None;
-        let mut root_includes = None;
-
-        while let Some(current_domain) = to_visit.pop() {
-            if visited.len() >= self.max_depth {
-                log_message(format!(
-                    "Maximum recursion depth of {} reached. Visited domains: {:?}",
-                    self.max_depth,
-                    visited.iter().collect::<Vec<_>>()
-                ));
-                break;
-            }
-
-            if visited.contains(&current_domain) {
-                // Already visited
-                continue;
-            }
-            visited.insert(current_domain.clone());
-
-            let Some(spf_txt) = self.get_spf(&current_domain).await? else {
-                continue;
-            };
-
-            let spf = Spf::from_str(&spf_txt).context("SPF_PARSE_FAILED")?;
-
-            let includes: Vec<String> = spf
-                .iter()
-                .filter(|m| m.kind().is_include())
-                .map(|m| m.raw())
-                .collect();
-
-            let redirect = spf
-                .iter()
-                .map(|m| m.raw())
-                .find(|raw| raw.starts_with("redirect="))
-                .map(|raw| raw.trim_start_matches("redirect=").to_string());
-
-            if root_domain == &current_domain {
-                // Save root domain information
-                root_spf_record = Some(spf_txt);
-                root_includes = Some(includes.clone());
-            }
-
-            if includes.contains(target) {
-                // Target found
-                return Ok(CheckResult {
-                    found: true,
-                    visited: visited.len(),
-                    spf_record: root_spf_record,
-                    included_domains: root_includes,
-                });
-            }
-
-            to_visit.extend(includes);
-
-            if let Some(redirect_domain) = redirect {
-                to_visit.push(redirect_domain);
-            }
-        }
-
-        // Target not found in any domain
-        Ok(CheckResult {
-            found: false,
-            visited: visited.len(),
-            spf_record: root_spf_record,
-            included_domains: root_includes,
-        })
-    }
-}
-
 fn log_message(msg: impl AsRef<str>) {
     println!(
         "[{}] {}",
@@ -168,7 +54,7 @@ fn log_message(msg: impl AsRef<str>) {
 
 async fn check_spf(
     Query(params): Query<SpfCheckParams>,
-    checker: State<Arc<SpfChecker>>,
+    checker: State<SpfChecker>,
 ) -> Response {
     let start = std::time::Instant::now();
 
@@ -220,18 +106,25 @@ async fn health() -> StatusCode {
     StatusCode::OK
 }
 
+fn app() -> Router<SpfChecker> {
+    Router::new()
+        .route("/health", get(health))
+        .route("/api/v1/check-spf", get(check_spf))
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     print_logo();
 
     log_message(format!("> {CARGO_PKG_NAME} v{CARGO_PKG_VERSION}"));
 
-    let checker = Arc::new(SpfChecker::new());
+    let mut opts = ResolverOpts::default();
+    opts.timeout = std::time::Duration::from_secs(2);
+    opts.attempts = 2;
+    let resolver = TokioAsyncResolver::tokio(ResolverConfig::default(), opts);
+    let spf_checker = SpfChecker::new(resolver);
 
-    let app = Router::new()
-        .route("/health", get(health))
-        .route("/api/v1/check-spf", get(check_spf))
-        .with_state(checker);
+    let app = app().with_state(spf_checker);
 
     let addr = SocketAddr::from(([0, 0, 0, 0], 8080));
 
