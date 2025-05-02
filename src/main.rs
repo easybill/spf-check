@@ -1,6 +1,6 @@
 mod spf_checker;
 
-use anyhow::{Result};
+use crate::spf_checker::{CheckResult, SpfChecker};
 use axum::extract::State;
 use axum::response::Response;
 use axum::{
@@ -15,11 +15,11 @@ use std::net::SocketAddr;
 use tokio::net::TcpListener;
 use trust_dns_resolver::config::{ResolverConfig, ResolverOpts};
 use trust_dns_resolver::TokioAsyncResolver;
-use crate::spf_checker::{CheckResult, SpfChecker};
 
 static CARGO_PKG_NAME: &str = env!("CARGO_PKG_NAME");
 static CARGO_PKG_VERSION: &str = env!("CARGO_PKG_VERSION");
 
+type Result<T> = anyhow::Result<T>;
 
 #[derive(Debug, Deserialize)]
 struct SpfCheckParams {
@@ -52,10 +52,7 @@ fn log_message(msg: impl AsRef<str>) {
     );
 }
 
-async fn check_spf(
-    Query(params): Query<SpfCheckParams>,
-    checker: State<SpfChecker>,
-) -> Response {
+async fn check_spf(Query(params): Query<SpfCheckParams>, checker: State<SpfChecker>) -> Response {
     let start = std::time::Instant::now();
 
     match checker.check(&params.domain, &params.target).await {
