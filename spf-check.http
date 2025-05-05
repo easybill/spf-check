@@ -20,7 +20,7 @@ GET http://localhost:8080/api/v1/check-spf?domain=google.com&target=_spf.easybil
 
     client.test("Response JSON is valid", () => {
         client.assert(!response.body.found);
-        client.assert(response.body.checked_domains === 1);
+        client.assert(response.body.checked_domains === 2);
         client.assert(response.body.spf_record === "v=spf1 include:_spf.google.com ~all");
         client.assert(response.body.included_domains.length === 1 && response.body.included_domains[0] === "_spf.google.com");
     });
@@ -31,4 +31,19 @@ GET http://localhost:8080/health
 
 > {%
     client.test("Status code is 200", () => client.assert(response.status === 200));
+%}
+
+
+### GET request to server with a redirect
+GET http://localhost:8080/api/v1/check-spf?domain=top21.sh&target=spf.easybill-mail.de
+
+> {%
+    client.test("Status code is 200", () => client.assert(response.status === 200));
+
+    client.test("Response JSON is valid", () => {
+        client.assert(response.body.found);
+        client.assert(response.body.checked_domains === 2);
+        client.assert(response.body.spf_record === "v=spf1 redirect=_sfjzzyuj0.sdmarc.net");
+        client.assert(response.body.included_domains.length === 7);
+    });
 %}
