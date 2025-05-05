@@ -442,7 +442,7 @@
             errorSection.style.display = 'none';
 
             try {
-                const response = await fetch(`http://localhost:8080/api/v1/check-spf?domain=${encodeURIComponent(domain)}&target=${encodeURIComponent(target)}`);
+                const response = await fetch(`/api/v1/check-spf?domain=${encodeURIComponent(domain)}&target=${encodeURIComponent(target)}`);
                 const data = await response.json();
 
                 if (!response.ok) {
