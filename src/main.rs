@@ -1,14 +1,11 @@
 mod spf_checker;
 
 use crate::spf_checker::{CheckResult, SpfChecker};
-use axum::extract::State;
-use axum::response::Response;
-use axum::http::header;
 use axum::{
-    extract::Query,
+    extract::{Query, State},
     http::header,
     http::StatusCode,
-    response::{IntoResponse, Json},
+    response::{IntoResponse, Json, Response},
     routing::get,
     Router,
 };
