@@ -10,6 +10,8 @@ A high-performance web service that checks if a target domain is included (direc
 - 🔄 Recursive checking of SPF include chains
 - 📋 Returns complete SPF record and include chain information
 - 💓 Health check endpoint
+- 🔒 Secure and efficient with Rust
+- 🌐 Easy to use HTML UI
 
 ## API
 
@@ -69,6 +71,13 @@ GET /health
 ```
 
 Returns `200 OK` if the service is running.
+
+### HTML UI
+
+```url
+http://localhost:8080/ui
+```
+Returns a simple HTML UI for checking SPF records.
 
 ## Example Usage
 

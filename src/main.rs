@@ -1,12 +1,12 @@
 mod spf_checker;
 
 use crate::spf_checker::{CheckResult, SpfChecker};
-use axum::extract::State;
-use axum::response::Response;
+use axum::response::Html;
 use axum::{
-    extract::Query,
+    extract::{Query, State}
+    ,
     http::StatusCode,
-    response::{IntoResponse, Json},
+    response::{IntoResponse, Json, Response},
     routing::get,
     Router,
 };
@@ -107,6 +107,11 @@ fn app() -> Router<SpfChecker> {
     Router::new()
         .route("/health", get(health))
         .route("/api/v1/check-spf", get(check_spf))
+        .route("/ui", get(serve_ui))
+}
+
+async fn serve_ui() -> Html<&'static str> {
+    Html(include_str!("html/ui.html"))
 }
 
 #[tokio::main]
