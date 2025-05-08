@@ -3,8 +3,7 @@ mod spf_checker;
 use crate::spf_checker::{CheckResult, SpfChecker};
 use axum::response::Html;
 use axum::{
-    extract::{Query, State}
-    ,
+    extract::{Query, State},
     http::StatusCode,
     response::{IntoResponse, Json, Response},
     routing::get,
