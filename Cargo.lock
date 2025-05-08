@@ -201,8 +201,7 @@ checksum = "0e60eed09d8c01d3cee5b7d30acb059b76614c918fa0f992e0dd6eeb10daad6f"
 [[package]]
 name = "decon-spf"
 version = "0.3.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d4af63070d942189cc82a0a2c69480422ec03ee30f6f22e238386e52c0b633a3"
+source = "git+https://github.com/coreequip/rust-decon-spf#47d29e36bba9adbd8e323cb0486e0c30afb381a2"
 dependencies = [
  "ipnetwork",
  "lazy_static",
