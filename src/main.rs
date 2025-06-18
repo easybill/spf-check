@@ -36,6 +36,7 @@ struct SpfCheckResponse {
     has_spf_record: bool,
     spf_record: Option<String>,
     included_domains: Option<Vec<String>>,
+    fallback_check: bool, // New field to indicate if fallback mechanism was used
 }
 
 #[derive(Debug, Serialize)]
@@ -56,17 +57,34 @@ async fn check_spf(Query(params): Query<SpfCheckParams>, checker: State<SpfCheck
 
     match checker.check(&params.domain, &params.target).await {
         Ok(CheckResult {
-            found,
-            visited,
-            spf_record,
-            included_domains,
-        }) => {
+               found,
+               visited,
+               spf_record,
+               included_domains,
+               fallback_check, // Include the new field in destructuring
+           }) => {
             let elapsed_ms = start.elapsed().as_millis() as u64;
 
-            log_message(format!(
-                "Successfully checked \"{}\" for \"{}\" ({}ms)",
-                params.domain, params.target, elapsed_ms
-            ));
+            let status_msg = if fallback_check {
+                if found {
+                    format!(
+                        "Successfully found all mechanisms from \"{}\" in \"{}\" via fallback check ({}ms)",
+                        params.target, params.domain, elapsed_ms
+                    )
+                } else {
+                    format!(
+                        "Fallback check completed for \"{}\" in \"{}\" - not all mechanisms found ({}ms)",
+                        params.target, params.domain, elapsed_ms
+                    )
+                }
+            } else {
+                format!(
+                    "Successfully checked \"{}\" for \"{}\" ({}ms)",
+                    params.domain, params.target, elapsed_ms
+                )
+            };
+
+            log_message(status_msg);
 
             let response = SpfCheckResponse {
                 found,
@@ -77,6 +95,7 @@ async fn check_spf(Query(params): Query<SpfCheckParams>, checker: State<SpfCheck
                 has_spf_record: spf_record.is_some(),
                 spf_record,
                 included_domains,
+                fallback_check, // Include in response
             };
 
             (StatusCode::OK, Json(response)).into_response()
