@@ -30,6 +30,7 @@ pub struct CheckResult {
     pub visited: usize,
     pub spf_record: Option<String>,
     pub included_domains: Option<Vec<String>>,
+    pub fallback_check: bool,
 }
 
 /// https://datatracker.ietf.org/doc/html/rfc7208#section-4.6.4
@@ -54,6 +55,27 @@ impl SpfChecker {
     }
 
     pub async fn check(&self, root_domain: &String, target: &String) -> Result<CheckResult> {
+        // First, try the original logic
+        let initial_result = self.check_direct_include(root_domain, target).await?;
+
+        if initial_result.found {
+            return Ok(initial_result);
+        }
+
+        // If target include not found, try fallback mechanism check
+        log_message(format!(
+            "Target include '{target}' not found directly. Attempting fallback mechanism check."
+        ));
+
+        self.check_target_mechanisms(root_domain, target, initial_result)
+            .await
+    }
+
+    async fn check_direct_include(
+        &self,
+        root_domain: &String,
+        target: &String,
+    ) -> Result<CheckResult> {
         let mut to_visit_stack = vec![root_domain.to_owned()];
         let mut visited = HashSet::new();
 
@@ -100,6 +122,7 @@ impl SpfChecker {
                     visited: visited.len(),
                     spf_record: root_spf_record,
                     included_domains: Some(included_domains),
+                    fallback_check: false,
                 });
             }
 
@@ -126,7 +149,139 @@ impl SpfChecker {
             visited: visited.len(),
             spf_record: root_spf_record,
             included_domains: Some(included_domains),
+            fallback_check: false,
         })
+    }
+
+    async fn check_target_mechanisms(
+        &self,
+        root_domain: &String,
+        target: &String,
+        initial_result: CheckResult,
+    ) -> Result<CheckResult> {
+        // Resolve the target includes SPF record
+        let Some(target_spf_txt) = self.resolver.find_spf_record(target).await? else {
+            log_message(format!("No SPF record found for target domain: {target}"));
+            return Ok(CheckResult {
+                found: false,
+                visited: initial_result.visited,
+                spf_record: initial_result.spf_record,
+                included_domains: initial_result.included_domains,
+                fallback_check: true,
+            });
+        };
+
+        let target_spf = Spf::from_str(&target_spf_txt).context("TARGET_SPF_PARSE_FAILED")?;
+
+        // Extract mechanisms from target SPF (excluding 'all' mechanisms)
+        let target_mechanisms: Vec<String> = target_spf
+            .iter()
+            .filter(|mechanism| !mechanism.kind().is_all()) // Exclude 'all' mechanisms
+            .map(|mechanism| mechanism.raw())
+            .collect();
+
+        if target_mechanisms.is_empty() {
+            log_message(format!(
+                "No mechanisms found in target SPF record: {target_spf_txt}"
+            ));
+            return Ok(CheckResult {
+                found: false,
+                visited: initial_result.visited,
+                spf_record: initial_result.spf_record,
+                included_domains: initial_result.included_domains,
+                fallback_check: true,
+            });
+        }
+
+        log_message(format!("Target mechanisms to check: {target_mechanisms:?}"));
+
+        // Now check if all target mechanisms are present in root domain's SPF chain
+        let all_mechanisms_found = self
+            .check_all_mechanisms_present(root_domain, &target_mechanisms)
+            .await?;
+
+        Ok(CheckResult {
+            found: all_mechanisms_found,
+            visited: initial_result.visited + 1, // +1 for the target domain lookup
+            spf_record: initial_result.spf_record,
+            included_domains: initial_result.included_domains,
+            fallback_check: true,
+        })
+    }
+
+    async fn check_all_mechanisms_present(
+        &self,
+        root_domain: &String,
+        target_mechanisms: &[String],
+    ) -> Result<bool> {
+        let mut to_visit_stack = vec![root_domain.to_owned()];
+        let mut visited = HashSet::new();
+        let mut found_mechanisms = HashSet::new();
+
+        while let Some(current_domain) = to_visit_stack.pop() {
+            if visited.len() >= DNS_LOOKUP_LIMIT {
+                log_message(format!(
+                    "Maximum DNS lookup limit reached during mechanism check: {DNS_LOOKUP_LIMIT}"
+                ));
+                break;
+            }
+
+            if !visited.insert(current_domain.clone()) {
+                continue;
+            }
+
+            let Some(spf_txt) = self.resolver.find_spf_record(&current_domain).await? else {
+                continue;
+            };
+
+            let spf = Spf::from_str(&spf_txt).context("SPF_PARSE_FAILED")?;
+
+            // Collect all mechanisms from current SPF record
+            let current_mechanisms: Vec<String> =
+                spf.iter().map(|mechanism| mechanism.raw()).collect();
+
+            // Check which target mechanisms are present in current record
+            for target_mechanism in target_mechanisms {
+                if current_mechanisms.contains(target_mechanism) {
+                    found_mechanisms.insert(target_mechanism.clone());
+                }
+            }
+
+            // If all target mechanisms found, return early
+            if found_mechanisms.len() == target_mechanisms.len() {
+                log_message(format!("All target mechanisms found: {found_mechanisms:?}"));
+                return Ok(true);
+            }
+
+            // Continue traversing includes and redirects
+            let includes: Vec<String> = spf
+                .iter()
+                .filter(|mechanism| mechanism.kind().is_include())
+                .map(|mechanism| mechanism.raw())
+                .collect();
+
+            if !spf.iter().any(|mechanism| mechanism.kind().is_all()) {
+                let redirect = spf
+                    .iter()
+                    .filter(|mechanism| mechanism.kind().is_redirect())
+                    .map(|mechanism| mechanism.raw());
+
+                to_visit_stack.extend(redirect);
+            }
+
+            to_visit_stack.extend(includes);
+        }
+
+        let missing_mechanisms: Vec<&String> = target_mechanisms
+            .iter()
+            .filter(|mechanism| !found_mechanisms.contains(*mechanism))
+            .collect();
+
+        log_message(format!(
+            "Mechanism check completed. Found: {found_mechanisms:?}, Missing: {missing_mechanisms:?}"
+        ));
+
+        Ok(found_mechanisms.len() == target_mechanisms.len())
     }
 }
 
@@ -182,6 +337,7 @@ mod tests {
             Some("v=spf1 include:mail.easybill.de ~all".to_string()),
         );
         assert_eq!(result.included_domains, Some(vec![target_domain]));
+        assert!(!result.fallback_check);
     }
 
     #[tokio::test]
@@ -205,6 +361,52 @@ mod tests {
             result.included_domains,
             Some(vec!["mail.easybill.de".to_string()])
         );
+        assert!(result.fallback_check);
+    }
+
+    #[tokio::test]
+    async fn test_fallback_mechanism_check_success() {
+        let root_domain = "example.com".to_string();
+        let target_domain = "mail.easybill.de".to_string();
+
+        let mock_resolver = MockResolver::new();
+        // Root domain has individual mechanisms instead of include
+        mock_resolver.add_record(
+            &root_domain,
+            "v=spf1 a:server1.easybill.de mx:server2.easybill.de ~all",
+        );
+        // Target domain has the same mechanisms
+        mock_resolver.add_record(
+            &target_domain,
+            "v=spf1 a:server1.easybill.de mx:server2.easybill.de ~all",
+        );
+
+        let checker = SpfChecker::new(mock_resolver.clone());
+        let result = checker.check(&root_domain, &target_domain).await.unwrap();
+
+        assert!(result.found);
+        assert!(result.fallback_check);
+    }
+
+    #[tokio::test]
+    async fn test_fallback_mechanism_check_partial_match() {
+        let root_domain = "example.com".to_string();
+        let target_domain = "mail.easybill.de".to_string();
+
+        let mock_resolver = MockResolver::new();
+        // Root domain has only one of the target mechanisms
+        mock_resolver.add_record(&root_domain, "v=spf1 a:server1.easybill.de ~all");
+        // Target domain has multiple mechanisms
+        mock_resolver.add_record(
+            &target_domain,
+            "v=spf1 a:server1.easybill.de mx:server2.easybill.de ~all",
+        );
+
+        let checker = SpfChecker::new(mock_resolver.clone());
+        let result = checker.check(&root_domain, &target_domain).await.unwrap();
+
+        assert!(!result.found);
+        assert!(result.fallback_check);
     }
 
     #[tokio::test]
@@ -227,6 +429,7 @@ mod tests {
             Some("v=spf1 redirect=spf.easybill-mail.de".to_string()),
         );
         assert_eq!(result.included_domains, Some(vec![target_domain]));
+        assert!(!result.fallback_check);
     }
 
     #[tokio::test]
@@ -253,5 +456,6 @@ mod tests {
             result.included_domains,
             Some(vec!["mail.easybill.de".to_string()])
         );
+        assert!(result.fallback_check);
     }
 }

@@ -36,6 +36,7 @@ struct SpfCheckResponse {
     has_spf_record: bool,
     spf_record: Option<String>,
     included_domains: Option<Vec<String>>,
+    fallback_check: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -60,13 +61,32 @@ async fn check_spf(Query(params): Query<SpfCheckParams>, checker: State<SpfCheck
             visited,
             spf_record,
             included_domains,
+            fallback_check,
         }) => {
             let elapsed_ms = start.elapsed().as_millis() as u64;
 
-            log_message(format!(
-                "Successfully checked \"{}\" for \"{}\" ({}ms)",
-                params.domain, params.target, elapsed_ms
-            ));
+            let status_msg = match (fallback_check, found) {
+                (true, true) => {
+                    format!(
+                        "Successfully found all mechanisms from \"{}\" in \"{}\" via fallback check ({}ms)",
+                        params.target, params.domain, elapsed_ms
+                    )
+                }
+                (true, false) => {
+                    format!(
+                        "Fallback check completed for \"{}\" in \"{}\" - not all mechanisms found ({}ms)",
+                        params.target, params.domain, elapsed_ms
+                    )
+                }
+                (false, _) => {
+                    format!(
+                        "Successfully checked \"{}\" for \"{}\" ({}ms)",
+                        params.domain, params.target, elapsed_ms
+                    )
+                }
+            };
+
+            log_message(status_msg);
 
             let response = SpfCheckResponse {
                 found,
@@ -77,6 +97,7 @@ async fn check_spf(Query(params): Query<SpfCheckParams>, checker: State<SpfCheck
                 has_spf_record: spf_record.is_some(),
                 spf_record,
                 included_domains,
+                fallback_check,
             };
 
             (StatusCode::OK, Json(response)).into_response()
