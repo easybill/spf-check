@@ -36,7 +36,7 @@ struct SpfCheckResponse {
     has_spf_record: bool,
     spf_record: Option<String>,
     included_domains: Option<Vec<String>>,
-    fallback_check: bool, // New field to indicate if fallback mechanism was used
+    fallback_check: bool,
 }
 
 #[derive(Debug, Serialize)]

@@ -39,7 +39,8 @@ GET /api/v1/check-spf?domain={domain}&target={target}
     "elapsed_ms": 42,
     "has_spf_record": true,
     "spf_record": "v=spf1 include:spf.protection.outlook.com -all",
-    "included_domains": ["spf.protection.outlook.com"]
+    "included_domains": ["spf.protection.outlook.com"],
+    "fallback_check": false
 }
 ```
 
@@ -51,6 +52,7 @@ GET /api/v1/check-spf?domain={domain}&target={target}
 - `has_spf_record`: Boolean indicating if the domain has an SPF record
 - `spf_record`: The complete SPF record of the main domain (if exists, otherwise `null`)
 - `included_domains`: List of domains included in the main SPF record (if exists, otherwise `null`)
+- `fallback_check`: Boolean indicating if a fallback check was performed (if the target was not found in the SPF record)
 
 #### Error Response
 
