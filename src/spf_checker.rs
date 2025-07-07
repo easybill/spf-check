@@ -64,15 +64,18 @@ impl SpfChecker {
 
         // If target include not found, try fallback mechanism check
         log_message(format!(
-            "Target include '{}' not found directly. Attempting fallback mechanism check.",
-            target
+            "Target include '{target}' not found directly. Attempting fallback mechanism check."
         ));
 
-        let fallback_result = self.check_target_mechanisms(root_domain, target, initial_result).await?;
-        Ok(fallback_result)
+        self.check_target_mechanisms(root_domain, target, initial_result)
+            .await
     }
 
-    async fn check_direct_include(&self, root_domain: &String, target: &String) -> Result<CheckResult> {
+    async fn check_direct_include(
+        &self,
+        root_domain: &String,
+        target: &String,
+    ) -> Result<CheckResult> {
         let mut to_visit_stack = vec![root_domain.to_owned()];
         let mut visited = HashSet::new();
 
@@ -150,10 +153,15 @@ impl SpfChecker {
         })
     }
 
-    async fn check_target_mechanisms(&self, root_domain: &String, target: &String, initial_result: CheckResult) -> Result<CheckResult> {
-        // Resolve the target include's SPF record
+    async fn check_target_mechanisms(
+        &self,
+        root_domain: &String,
+        target: &String,
+        initial_result: CheckResult,
+    ) -> Result<CheckResult> {
+        // Resolve the target includes SPF record
         let Some(target_spf_txt) = self.resolver.find_spf_record(target).await? else {
-            log_message(format!("No SPF record found for target domain: {}", target));
+            log_message(format!("No SPF record found for target domain: {target}"));
             return Ok(CheckResult {
                 found: false,
                 visited: initial_result.visited,
@@ -173,7 +181,9 @@ impl SpfChecker {
             .collect();
 
         if target_mechanisms.is_empty() {
-            log_message(format!("No mechanisms found in target SPF record: {}", target_spf_txt));
+            log_message(format!(
+                "No mechanisms found in target SPF record: {target_spf_txt}"
+            ));
             return Ok(CheckResult {
                 found: false,
                 visited: initial_result.visited,
@@ -183,13 +193,12 @@ impl SpfChecker {
             });
         }
 
-        log_message(format!(
-            "Target mechanisms to check: {:?}",
-            target_mechanisms
-        ));
+        log_message(format!("Target mechanisms to check: {target_mechanisms:?}"));
 
         // Now check if all target mechanisms are present in root domain's SPF chain
-        let all_mechanisms_found = self.check_all_mechanisms_present(root_domain, &target_mechanisms).await?;
+        let all_mechanisms_found = self
+            .check_all_mechanisms_present(root_domain, &target_mechanisms)
+            .await?;
 
         Ok(CheckResult {
             found: all_mechanisms_found,
@@ -200,7 +209,11 @@ impl SpfChecker {
         })
     }
 
-    async fn check_all_mechanisms_present(&self, root_domain: &String, target_mechanisms: &[String]) -> Result<bool> {
+    async fn check_all_mechanisms_present(
+        &self,
+        root_domain: &String,
+        target_mechanisms: &[String],
+    ) -> Result<bool> {
         let mut to_visit_stack = vec![root_domain.to_owned()];
         let mut visited = HashSet::new();
         let mut found_mechanisms = HashSet::new();
@@ -208,8 +221,7 @@ impl SpfChecker {
         while let Some(current_domain) = to_visit_stack.pop() {
             if visited.len() >= DNS_LOOKUP_LIMIT {
                 log_message(format!(
-                    "Maximum DNS lookup limit reached during mechanism check: {}",
-                    DNS_LOOKUP_LIMIT
+                    "Maximum DNS lookup limit reached during mechanism check: {DNS_LOOKUP_LIMIT}"
                 ));
                 break;
             }
@@ -225,10 +237,8 @@ impl SpfChecker {
             let spf = Spf::from_str(&spf_txt).context("SPF_PARSE_FAILED")?;
 
             // Collect all mechanisms from current SPF record
-            let current_mechanisms: Vec<String> = spf
-                .iter()
-                .map(|mechanism| mechanism.raw())
-                .collect();
+            let current_mechanisms: Vec<String> =
+                spf.iter().map(|mechanism| mechanism.raw()).collect();
 
             // Check which target mechanisms are present in current record
             for target_mechanism in target_mechanisms {
@@ -239,7 +249,7 @@ impl SpfChecker {
 
             // If all target mechanisms found, return early
             if found_mechanisms.len() == target_mechanisms.len() {
-                log_message(format!("All target mechanisms found: {:?}", found_mechanisms));
+                log_message(format!("All target mechanisms found: {found_mechanisms:?}"));
                 return Ok(true);
             }
 
@@ -268,8 +278,7 @@ impl SpfChecker {
             .collect();
 
         log_message(format!(
-            "Mechanism check completed. Found: {:?}, Missing: {:?}",
-            found_mechanisms, missing_mechanisms
+            "Mechanism check completed. Found: {found_mechanisms:?}, Missing: {missing_mechanisms:?}"
         ));
 
         Ok(found_mechanisms.len() == target_mechanisms.len())
@@ -362,9 +371,15 @@ mod tests {
 
         let mock_resolver = MockResolver::new();
         // Root domain has individual mechanisms instead of include
-        mock_resolver.add_record(&root_domain, "v=spf1 a:server1.easybill.de mx:server2.easybill.de ~all");
+        mock_resolver.add_record(
+            &root_domain,
+            "v=spf1 a:server1.easybill.de mx:server2.easybill.de ~all",
+        );
         // Target domain has the same mechanisms
-        mock_resolver.add_record(&target_domain, "v=spf1 a:server1.easybill.de mx:server2.easybill.de ~all");
+        mock_resolver.add_record(
+            &target_domain,
+            "v=spf1 a:server1.easybill.de mx:server2.easybill.de ~all",
+        );
 
         let checker = SpfChecker::new(mock_resolver.clone());
         let result = checker.check(&root_domain, &target_domain).await.unwrap();
@@ -382,7 +397,10 @@ mod tests {
         // Root domain has only one of the target mechanisms
         mock_resolver.add_record(&root_domain, "v=spf1 a:server1.easybill.de ~all");
         // Target domain has multiple mechanisms
-        mock_resolver.add_record(&target_domain, "v=spf1 a:server1.easybill.de mx:server2.easybill.de ~all");
+        mock_resolver.add_record(
+            &target_domain,
+            "v=spf1 a:server1.easybill.de mx:server2.easybill.de ~all",
+        );
 
         let checker = SpfChecker::new(mock_resolver.clone());
         let result = checker.check(&root_domain, &target_domain).await.unwrap();

@@ -57,31 +57,33 @@ async fn check_spf(Query(params): Query<SpfCheckParams>, checker: State<SpfCheck
 
     match checker.check(&params.domain, &params.target).await {
         Ok(CheckResult {
-               found,
-               visited,
-               spf_record,
-               included_domains,
-               fallback_check, // Include the new field in destructuring
-           }) => {
+            found,
+            visited,
+            spf_record,
+            included_domains,
+            fallback_check,
+        }) => {
             let elapsed_ms = start.elapsed().as_millis() as u64;
 
-            let status_msg = if fallback_check {
-                if found {
+            let status_msg = match (fallback_check, found) {
+                (true, true) => {
                     format!(
                         "Successfully found all mechanisms from \"{}\" in \"{}\" via fallback check ({}ms)",
                         params.target, params.domain, elapsed_ms
                     )
-                } else {
+                }
+                (true, false) => {
                     format!(
                         "Fallback check completed for \"{}\" in \"{}\" - not all mechanisms found ({}ms)",
                         params.target, params.domain, elapsed_ms
                     )
                 }
-            } else {
-                format!(
-                    "Successfully checked \"{}\" for \"{}\" ({}ms)",
-                    params.domain, params.target, elapsed_ms
-                )
+                (false, _) => {
+                    format!(
+                        "Successfully checked \"{}\" for \"{}\" ({}ms)",
+                        params.domain, params.target, elapsed_ms
+                    )
+                }
             };
 
             log_message(status_msg);
@@ -95,7 +97,7 @@ async fn check_spf(Query(params): Query<SpfCheckParams>, checker: State<SpfCheck
                 has_spf_record: spf_record.is_some(),
                 spf_record,
                 included_domains,
-                fallback_check, // Include in response
+                fallback_check,
             };
 
             (StatusCode::OK, Json(response)).into_response()
