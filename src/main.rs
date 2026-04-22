@@ -170,7 +170,7 @@ mod tests {
     async fn test_check_spf_with_provided_domains() {
         let app = app();
 
-        let url = format!("/api/v1/check-spf?domain=spf.easybill-mail.de&target={}", "auc-online.de");
+        let url = format!("/api/v1/check-spf?domain={}&target={}", "auc-online.de", "spf.easybill-mail.de");
 
         let response = app
             .oneshot(Request::get(url).body(Body::empty()).unwrap())
@@ -178,6 +178,9 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::OK);
+
+
+
     }
 
 }

@@ -260,6 +260,8 @@ impl SpfChecker {
                 .map(|mechanism| mechanism.raw())
                 .collect();
 
+            let test = spf.iter();
+
             if !spf.iter().any(|mechanism| mechanism.kind().is_all()) {
                 let redirect = spf
                     .iter()
@@ -418,6 +420,37 @@ mod tests {
         let mock_resolver = MockResolver::new();
         mock_resolver.add_record(&root_domain, "v=spf1 redirect=spf.easybill-mail.de");
         mock_resolver.add_record(&redirect_domain, "v=spf1 include:mail.easybill.de ~all");
+
+        let checker = SpfChecker::new(mock_resolver.clone());
+        let result = checker.check(&root_domain, &target_domain).await.unwrap();
+
+        assert!(result.found);
+        assert_eq!(result.visited, 2);
+        assert_eq!(
+            result.spf_record,
+            Some("v=spf1 redirect=spf.easybill-mail.de".to_string()),
+        );
+        assert_eq!(result.included_domains, Some(vec![target_domain]));
+        assert!(!result.fallback_check);
+    }
+
+    #[tokio::test]
+    async fn test_target_in_leaf_redirected_record() {
+        let target_domain = "spf.easybill-mail.de".to_string();
+        let target_include_domain = "ipv4.spf.easybill-mail.de".to_string();
+
+        let root_domain = "auc-online.de".to_string();
+        let redirect_domain = "auc-online.de.spf.hornetdmarc.com".to_string();
+
+        let mock_resolver = MockResolver::new();
+
+        // Setting up the target domain spf structure -> includes -> ips
+        mock_resolver.add_record(&target_domain, "v=spf1 include:ipv4.spf.easybill-mail.de");
+        mock_resolver.add_record(&target_include_domain, "v=spf1 ip4:167.235.178.61");
+
+        // Setting up the root domain spf structure -> redirect -> direct ip4 mechanism with ips which are in the includes of the target domain
+        mock_resolver.add_record(&root_domain, "v=spf1 redirect=auc-online.de.spf.hornetdmarc.com");
+        mock_resolver.add_record(&redirect_domain, "v=spf1 ip4:167.235.178.61 ~all");
 
         let checker = SpfChecker::new(mock_resolver.clone());
         let result = checker.check(&root_domain, &target_domain).await.unwrap();
