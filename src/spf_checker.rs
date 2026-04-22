@@ -456,13 +456,13 @@ mod tests {
         let result = checker.check(&root_domain, &target_domain).await.unwrap();
 
         assert!(result.found);
-        assert_eq!(result.visited, 2);
+        assert_eq!(result.visited, 3);
         assert_eq!(
             result.spf_record,
-            Some("v=spf1 redirect=spf.easybill-mail.de".to_string()),
+            Some("v=spf1 redirect=auc-online.de.spf.hornetdmarc.com".to_string()),
         );
         assert_eq!(result.included_domains, Some(vec![target_domain]));
-        assert!(!result.fallback_check);
+        assert!(result.fallback_check);
     }
 
     #[tokio::test]
