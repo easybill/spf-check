@@ -1026,6 +1026,7 @@ dependencies = [
  "http",
  "serde",
  "tokio",
+ "tower",
  "trust-dns-resolver",
 ]
 
