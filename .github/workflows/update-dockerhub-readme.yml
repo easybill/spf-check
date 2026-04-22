@@ -1,4 +1,4 @@
-name: update-dockerhub-readme
+name: Update-dockerhub-readme
 
 on:
   workflow_dispatch:

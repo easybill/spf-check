@@ -1,0 +1,15 @@
+[package]
+name = "spf_checker"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0.98"
+async-trait = "0.1.88"
+chrono = "0.4.41"
+# TODO: Use original crate when bugfix is released
+decon-spf = { git = "https://github.com/coreequip/rust-decon-spf" }
+trust-dns-resolver = { version = "0.23.2", features = ["tokio-runtime"] }
+
+[dev-dependencies]
+tokio = { version = "1.46.1", features = ["full"] }

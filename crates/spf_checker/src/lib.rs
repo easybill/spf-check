@@ -1,5 +1,4 @@
-use crate::{log_message, Result};
-use anyhow::Context;
+use anyhow::{Context, Result};
 use async_trait::async_trait;
 use decon_spf::Spf;
 use std::collections::HashSet;
@@ -38,6 +37,14 @@ pub struct CheckResult {
 /// > SPF implementations MUST limit the total number of those terms to 10
 /// > during SPF evaluation, to avoid unreasonable load on the DNS.
 const DNS_LOOKUP_LIMIT: usize = 10;
+
+fn log_message(msg: impl AsRef<str>) {
+    println!(
+        "[{}] {}",
+        chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%.3f"),
+        msg.as_ref()
+    );
+}
 
 #[derive(Clone, Debug)]
 pub struct SpfChecker {
@@ -260,6 +267,8 @@ impl SpfChecker {
                 .map(|mechanism| mechanism.raw())
                 .collect();
 
+            let test = spf.iter();
+
             if !spf.iter().any(|mechanism| mechanism.kind().is_all()) {
                 let redirect = spf
                     .iter()
@@ -430,6 +439,32 @@ mod tests {
         );
         assert_eq!(result.included_domains, Some(vec![target_domain]));
         assert!(!result.fallback_check);
+    }
+
+    #[tokio::test]
+    async fn test_target_redirect_with_ip4_ip6_mechanism_instead_of_include() {
+        let target_domain = "spf.easybill-mail.de".to_string();
+        let target_include_domain = "ipv4.spf.easybill-mail.de".to_string();
+
+        let root_domain = "auc-online.de".to_string();
+        let redirect_domain = "auc-online.de.spf.hornetdmarc.com".to_string();
+
+        let mock_resolver = MockResolver::new();
+
+        // Setting up the target domain spf structure -> includes -> ips
+        mock_resolver.add_record(&target_domain, "v=spf1 include:ipv4.spf.easybill-mail.de");
+        mock_resolver.add_record(&target_include_domain, "v=spf1 ip4:167.235.178.61");
+
+        // Setting up the root domain spf structure -> redirect -> direct ip4 mechanism with ips which are in the includes of the target domain
+        mock_resolver.add_record(&root_domain, "v=spf1 redirect=auc-online.de.spf.hornetdmarc.com");
+        mock_resolver.add_record(&redirect_domain, "v=spf1 ip4:167.235.178.61 ~all");
+
+        let checker = SpfChecker::new(mock_resolver.clone());
+        let result = checker.check(&root_domain, &target_domain).await.unwrap();
+
+        // The test will fail. The issue is, that our spf_checker only resolves around the includes mechanism but won't work if the root_domain
+        // includes the IPs directly with the ip4 or ip6 mechanism.
+        assert!(result.found);
     }
 
     #[tokio::test]

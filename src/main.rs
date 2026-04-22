@@ -1,6 +1,4 @@
-mod spf_checker;
-
-use crate::spf_checker::{CheckResult, SpfChecker};
+use spf_checker::{CheckResult, SpfChecker};
 use axum::response::Html;
 use axum::{
     extract::{Query, State},
@@ -123,11 +121,19 @@ async fn health() -> StatusCode {
     StatusCode::OK
 }
 
-fn app() -> Router<SpfChecker> {
+fn create_tokio_async_resolver() -> TokioAsyncResolver {
+    let mut opts = ResolverOpts::default();
+    opts.timeout = std::time::Duration::from_secs(2);
+    opts.attempts = 2;
+    TokioAsyncResolver::tokio(ResolverConfig::default(), opts)
+}
+
+fn app() -> Router {
     Router::new()
         .route("/health", get(health))
         .route("/api/v1/check-spf", get(check_spf))
         .route("/ui", get(serve_ui))
+        .with_state(SpfChecker::new(create_tokio_async_resolver()))
 }
 
 async fn serve_ui() -> Html<&'static str> {
@@ -136,34 +142,43 @@ async fn serve_ui() -> Html<&'static str> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    print_logo();
-
     log_message(format!("> {CARGO_PKG_NAME} v{CARGO_PKG_VERSION}"));
-
-    let mut opts = ResolverOpts::default();
-    opts.timeout = std::time::Duration::from_secs(2);
-    opts.attempts = 2;
-    let resolver = TokioAsyncResolver::tokio(ResolverConfig::default(), opts);
-    let spf_checker = SpfChecker::new(resolver);
-
-    let app = app().with_state(spf_checker);
 
     let addr = SocketAddr::from(([0, 0, 0, 0], 8080));
 
     log_message(format!("Listening on {}", addr));
 
     let listener = TcpListener::bind(addr).await?;
-    axum::serve(listener, app).await?;
+    axum::serve(listener, app()).await?;
 
     Ok(())
 }
 
-#[rustfmt::skip]
-fn print_logo() {
-    log_message("  ______________________________       _________ .__                   __");
-    log_message(" /   _____/\\______   \\_   _____/       \\_   ___ \\|  |__   ____   ____ |  | __");
-    log_message(" \\_____  \\  |     ___/|    __)  ______ /    \\  \\/|  |  \\_/ __ \\_/ ___\\|  |/ /");
-    log_message(" /        \\ |    |    |     \\  /_____/ \\     \\___|   Y  \\  ___/\\  \\___|    <");
-    log_message("/_______  / |____|    \\___  /           \\______  /___|  /\\___  >\\___  >__|_ \\");
-    log_message("        \\/                \\/                   \\/     \\/     \\/     \\/     \\/");
+// https://github.com/tokio-rs/axum/blob/main/examples/testing/src/main.rs
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::{
+        body::Body,
+        http::Request,
+    };
+    use tower::ServiceExt;
+
+    #[tokio::test]
+    async fn test_check_spf_with_provided_domains() {
+        let app = app();
+
+        let url = format!("/api/v1/check-spf?domain={}&target={}", "auc-online.de", "spf.easybill-mail.de");
+
+        let response = app
+            .oneshot(Request::get(url).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+
+
+    }
+
 }
