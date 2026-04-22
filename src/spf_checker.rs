@@ -435,7 +435,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_target_in_leaf_redirected_record() {
+    async fn test_target_redirect_with_ip4_ip6_mechanism_instead_of_include() {
         let target_domain = "spf.easybill-mail.de".to_string();
         let target_include_domain = "ipv4.spf.easybill-mail.de".to_string();
 
@@ -455,6 +455,8 @@ mod tests {
         let checker = SpfChecker::new(mock_resolver.clone());
         let result = checker.check(&root_domain, &target_domain).await.unwrap();
 
+        // The test will fail. The issue is, that our spf_checker only resolves around the includes mechanism but won't work if the root_domain
+        // includes the IPs directly with the ip4 or ip6 mechanism.
         assert!(result.found);
     }
 
