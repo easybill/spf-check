@@ -1,4 +1,3 @@
-use spf_checker::{CheckResult, SpfChecker};
 use axum::{
     extract::{Query, State},
     http::StatusCode,
@@ -7,6 +6,7 @@ use axum::{
     Router,
 };
 use serde::{Deserialize, Serialize};
+use spf_checker::{CheckResult, SpfChecker};
 use std::net::SocketAddr;
 use tokio::net::TcpListener;
 use trust_dns_resolver::config::{ResolverConfig, ResolverOpts};
@@ -152,10 +152,7 @@ async fn main() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::{
-        body::Body,
-        http::Request,
-    };
+    use axum::{body::Body, http::Request};
     use tower::ServiceExt;
 
     #[tokio::test]
@@ -163,7 +160,10 @@ mod tests {
     async fn test_check_spf_with_provided_domains() {
         let app = app();
 
-        let url = format!("/api/v1/check-spf?domain={}&target={}", "auc-online.de", "spf.easybill-mail.de");
+        let url = format!(
+            "/api/v1/check-spf?domain={}&target={}",
+            "auc-online.de", "spf.easybill-mail.de"
+        );
 
         let response = app
             .oneshot(Request::get(url).body(Body::empty()).unwrap())
@@ -172,5 +172,4 @@ mod tests {
 
         assert_eq!(response.status(), StatusCode::OK);
     }
-
 }
