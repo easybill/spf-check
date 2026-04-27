@@ -1038,7 +1038,6 @@ dependencies = [
  "chrono",
  "decon-spf",
  "tokio",
- "tower",
  "trust-dns-resolver",
 ]
 
