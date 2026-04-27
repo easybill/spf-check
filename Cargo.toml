@@ -8,7 +8,7 @@ version = "0.2.0"
 edition = "2021"
 
 [dev-dependencies]
-tower = "0.5.2"
+tower = "0.5.3"
 
 [dependencies]
 anyhow = "1.0.98"
