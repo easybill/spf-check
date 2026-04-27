@@ -1,5 +1,6 @@
 [workspace]
 members = ["crates/spf_checker"]
+default-members = [".", "crates/spf_checker"]
 
 [package]
 name = "spf-check"

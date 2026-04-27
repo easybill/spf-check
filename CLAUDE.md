@@ -80,8 +80,8 @@ The legacy behavior is implemented in `check_direct_include` + `check_target_mec
 - **Manual API tests**: `spf-check.http` (REST-client compatible).
 - **External smoke test**: `node test-service.js` (Node.js, hits the running service).
 - **Release build**: `cargo build --release` then `./target/release/spf-check`.
-- **Lint**: `cargo clippy --all-targets -- -D warnings`.
-- **Tests**: `cargo test`.
+- **Lint**: `cargo clippy --workspace --all-targets -- -D warnings`.
+- **Tests**: `cargo test --workspace` (or just `cargo test` — the workspace's `default-members` already covers both crates).
 
 ## API Contract
 
@@ -116,7 +116,7 @@ The legacy behavior is implemented in `check_direct_include` + `check_target_mec
 - Run `cargo clippy` after **every** change to lint the project.
 - Use `cargo clippy --fix` to auto-resolve fixable issues.
 - Any clippy warnings or errors that remain after `--fix` must be addressed manually before the task is considered complete.
-- **CI enforcement**: `.github/workflows/clippy.yml` runs `cargo clippy --all-targets --locked -- -D warnings` and `.github/workflows/test.yml` runs `cargo test --all-targets --locked` on every push to `main`/`development` and on every PR. Keep them green locally before pushing — CI is the authoritative gate.
+- **CI enforcement**: `.github/workflows/linting.yml` runs `cargo clippy --workspace --all-targets --locked -- -D warnings` and `.github/workflows/tests.yml` runs `cargo test --workspace --all-targets --locked` on every PR against `main`. Keep them green locally before pushing — CI is the authoritative gate.
 
 ## Testing & Benchmarking
 
