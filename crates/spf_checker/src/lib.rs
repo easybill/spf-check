@@ -267,8 +267,6 @@ impl SpfChecker {
                 .map(|mechanism| mechanism.raw())
                 .collect();
 
-            let test = spf.iter();
-
             if !spf.iter().any(|mechanism| mechanism.kind().is_all()) {
                 let redirect = spf
                     .iter()
