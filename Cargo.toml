@@ -9,6 +9,7 @@ edition = "2021"
 
 [dev-dependencies]
 tower = "0.5.3"
+spf_checker = { path = "crates/spf_checker", features = ["tests"] }
 
 [dependencies]
 anyhow = "1.0.102"
