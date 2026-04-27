@@ -13,3 +13,6 @@ trust-dns-resolver = { version = "0.23.2", features = ["tokio-runtime"] }
 
 [dev-dependencies]
 tokio = { version = "1.52.1", features = ["full"] }
+
+[features]
+tests = []
