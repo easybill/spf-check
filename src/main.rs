@@ -1,5 +1,4 @@
 use spf_checker::{CheckResult, SpfChecker};
-use axum::response::Html;
 use axum::{
     extract::{Query, State},
     http::StatusCode,
@@ -132,12 +131,7 @@ fn app() -> Router {
     Router::new()
         .route("/health", get(health))
         .route("/api/v1/check-spf", get(check_spf))
-        .route("/ui", get(serve_ui))
         .with_state(SpfChecker::new(create_tokio_async_resolver()))
-}
-
-async fn serve_ui() -> Html<&'static str> {
-    Html(include_str!("html/ui.html"))
 }
 
 #[tokio::main]
