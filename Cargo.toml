@@ -1,17 +1,22 @@
+[workspace]
+members = ["crates/spf_checker"]
+default-members = [".", "crates/spf_checker"]
+
 [package]
 name = "spf-check"
-version = "0.1.3"
+version = "0.2.0"
 edition = "2021"
+
+[dev-dependencies]
+tower = "0.5.3"
 
 [dependencies]
 anyhow = "1.0.98"
-async-trait = "0.1.88"
 axum = "0.8.4"
 chrono = "0.4.41"
-# TODO: Use original crate when bugfix is released
-decon-spf = { git = "https://github.com/coreequip/rust-decon-spf" }
 http = "1.3.1"
 serde = { version = "1.0.219", features = ["derive"] }
+spf_checker = { path = "crates/spf_checker" }
 tokio = { version = "1.46.1", features = ["full"] }
 trust-dns-resolver = { version = "0.23.2", features = ["tokio-runtime"] }
 
