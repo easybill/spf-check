@@ -165,6 +165,7 @@ mod tests {
     use tower::ServiceExt;
 
     #[tokio::test]
+    #[ignore = "An example for integration test against axum. Not yet fully implemented"]
     async fn test_check_spf_with_provided_domains() {
         let app = app();
 

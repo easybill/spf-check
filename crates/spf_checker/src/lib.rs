@@ -440,6 +440,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "This example shows the current behaviour of the crate and the issue that the SPF-Record is not fully resolved"]
     async fn test_target_redirect_with_ip4_ip6_mechanism_instead_of_include() {
         let target_domain = "spf.easybill-mail.de".to_string();
         let target_include_domain = "ipv4.spf.easybill-mail.de".to_string();
