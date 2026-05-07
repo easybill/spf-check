@@ -17,7 +17,7 @@ chrono = "0.4.44"
 http = "1.4.0"
 serde = { version = "1.0.219", features = ["derive"] }
 spf_checker = { path = "crates/spf_checker" }
-tokio = { version = "1.52.1", features = ["full"] }
+tokio = { version = "1.52.2", features = ["full"] }
 trust-dns-resolver = { version = "0.23.2", features = ["tokio-runtime"] }
 
 [profile.release]
