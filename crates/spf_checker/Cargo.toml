@@ -12,4 +12,4 @@ decon-spf = { git = "https://github.com/coreequip/rust-decon-spf" }
 trust-dns-resolver = { version = "0.23.2", features = ["tokio-runtime"] }
 
 [dev-dependencies]
-tokio = { version = "1.52.1", features = ["full"] }
+tokio = { version = "1.52.3", features = ["full"] }
