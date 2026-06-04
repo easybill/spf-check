@@ -13,11 +13,11 @@ tower = "0.5.3"
 [dependencies]
 anyhow = "1.0.102"
 axum = "0.8.9"
-chrono = "0.4.44"
-http = "1.4.0"
+chrono = "0.4.45"
+http = "1.4.1"
 serde = { version = "1.0.219", features = ["derive"] }
 spf_checker = { path = "crates/spf_checker" }
-tokio = { version = "1.52.1", features = ["full"] }
+tokio = { version = "1.52.3", features = ["full"] }
 trust-dns-resolver = { version = "0.23.2", features = ["tokio-runtime"] }
 
 [profile.release]
