@@ -49,10 +49,10 @@ fn log_message(msg: impl AsRef<str>) {
     );
 }
 
-async fn check_spf(Query(params): Query<SpfCheckParams>, checker: State<SpfChecker>) -> Response {
+async fn check_spf(Query(params): Query<SpfCheckParams>, spf_checker: State<SpfChecker>) -> Response {
     let start = std::time::Instant::now();
 
-    match checker.check(&params.domain, &params.target).await {
+    match spf_checker.check(&params.domain, &params.target).await {
         Ok(CheckResult {
             found,
             visited,
@@ -143,6 +143,7 @@ async fn main() -> Result<()> {
     log_message(format!("Listening on {}", addr));
 
     let listener = TcpListener::bind(addr).await?;
+
     axum::serve(listener, app()).await?;
 
     Ok(())
