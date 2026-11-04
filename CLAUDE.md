@@ -112,6 +112,7 @@ A `target` is considered "covered" by `domain` if **either**:
 ## Testing & Benchmarking
 
 - **Unit tests** belong next to the module under `#[cfg(test)] mod tests` and must use the `SpnResolver` trait with a mock (see `MockResolver` in `crates/spf_checker/src/lib.rs`). Never hit real DNS in unit tests.
+- The `TokioAsyncResolver` implementation of `SpnResolver` cannot be tested with the mock. It is tested in `crates/spf_checker/tests/tokio_resolver.rs` against a minimal fake DNS server on localhost (built with `trust-dns-proto`), so it does not hit real DNS either.
 - **Integration tests** belong in a dedicated top-level `tests/` directory (create it on first need). The pre-existing `#[tokio::test]` in `main.rs` that hits real DNS is legacy; migrate it to `tests/` and replace it with a mock-backed variant when convenient.
 - **Benchmarks**: there is no `benches/` directory yet. Add one (with `criterion` or similar) before relying on `cargo bench`.
 - Performance budgets are not formally defined. Until they are, treat regressions in `elapsed_ms` from the existing handler tests as the informal signal.

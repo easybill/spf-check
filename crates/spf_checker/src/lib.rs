@@ -169,14 +169,22 @@ impl SpfChecker {
         let mut to_visit_stack = vec![domain.to_owned()];
 
         while let Some(current_domain) = to_visit_stack.pop() {
-            if !visited.insert(current_domain.clone()) {
+            if visited.contains(&current_domain) {
                 continue;
             }
 
             // The lookup of the domain itself does not count towards the limit.
-            if visited.len() > DNS_LOOKUP_LIMIT + 1 {
-                bail!("DNS_LOOKUP_LIMIT_EXCEEDED");
+            if visited.len() > DNS_LOOKUP_LIMIT {
+                log_message(format!(
+                    "DNS lookup limit of {DNS_LOOKUP_LIMIT} reached while resolving \"{domain}\". \
+                     Continuing with the records collected so far, skipping \"{current_domain}\" \
+                     and {} more.",
+                    to_visit_stack.len()
+                ));
+                break;
             }
+
+            visited.insert(current_domain.clone());
 
             let Some(spf_txt) = self.resolver.find_spf_record(&current_domain).await? else {
                 continue;
@@ -200,9 +208,11 @@ impl SpfChecker {
                 } else if kind.is_include() {
                     includes.push(mechanism.raw());
                 } else if kind.is_ip() {
-                    let network =
-                        IpNetwork::from_str(&mechanism.raw()).context("SPF_PARSE_FAILED")?;
-                    resolved.networks.push(network);
+                    // `Spf::from_str` already rejects invalid `ip4`/`ip6` values, so parsing
+                    // the validated value again cannot fail.
+                    resolved
+                        .networks
+                        .extend(IpNetwork::from_str(&mechanism.raw()).ok());
                 }
             }
 
@@ -242,12 +252,14 @@ mod tests {
     #[derive(Debug, Clone)]
     struct MockResolver {
         records: Arc<Mutex<HashMap<String, String>>>,
+        failing_domains: Arc<Mutex<HashSet<String>>>,
     }
 
     impl MockResolver {
         fn new() -> Self {
             Self {
                 records: Arc::new(Mutex::new(HashMap::new())),
+                failing_domains: Arc::new(Mutex::new(HashSet::new())),
             }
         }
 
@@ -255,11 +267,20 @@ mod tests {
             let mut records = self.records.lock().unwrap();
             records.insert(domain.to_string(), spf_record.to_owned());
         }
+
+        fn fail_lookup(&self, domain: &str) {
+            let mut failing_domains = self.failing_domains.lock().unwrap();
+            failing_domains.insert(domain.to_string());
+        }
     }
 
     #[async_trait]
     impl SpnResolver for MockResolver {
         async fn find_spf_record(&self, domain: &str) -> Result<Option<String>> {
+            if self.failing_domains.lock().unwrap().contains(domain) {
+                bail!("DNS_LOOKUP_FAILED");
+            }
+
             let records = self.records.lock().expect("mutex poisoned");
             Ok(records.get(domain).cloned())
         }
@@ -560,6 +581,72 @@ mod tests {
         assert!(!result.found);
     }
 
+    async fn check_error(mock_resolver: &MockResolver, root_domain: &str, target: &str) -> String {
+        SpfChecker::new(mock_resolver.clone())
+            .check(&root_domain.to_string(), &target.to_string())
+            .await
+            .unwrap_err()
+            .to_string()
+    }
+
+    #[tokio::test]
+    async fn test_domain_reached_twice_is_resolved_once() {
+        let mock_resolver = MockResolver::new();
+        mock_resolver.add_record("target.com", "v=spf1 ip4:192.0.2.10 -all");
+        mock_resolver.add_record(
+            "example.com",
+            "v=spf1 include:_a.example.com include:_b.example.com ~all",
+        );
+        mock_resolver.add_record("_a.example.com", "v=spf1 include:_shared.example.com");
+        mock_resolver.add_record("_b.example.com", "v=spf1 include:_shared.example.com");
+        mock_resolver.add_record("_shared.example.com", "v=spf1 ip4:192.0.2.10");
+
+        let result = check(&mock_resolver, "example.com", "target.com").await;
+
+        assert!(result.found);
+        assert_eq!(result.visited, 5);
+        assert_eq!(
+            result.included_domains,
+            Some(vec![
+                "_a.example.com".to_string(),
+                "_b.example.com".to_string(),
+                "_shared.example.com".to_string(),
+                "_shared.example.com".to_string(),
+            ])
+        );
+    }
+
+    #[tokio::test]
+    async fn test_lookup_failure_of_domain_fails_the_check() {
+        let mock_resolver = MockResolver::new();
+        mock_resolver.fail_lookup("example.com");
+
+        let error = check_error(&mock_resolver, "example.com", "target.com").await;
+
+        assert_eq!(error, "DNS_LOOKUP_FAILED");
+    }
+
+    #[tokio::test]
+    async fn test_lookup_failure_of_target_fails_the_check() {
+        let mock_resolver = MockResolver::new();
+        mock_resolver.add_record("example.com", "v=spf1 ip4:192.0.2.10 ~all");
+        mock_resolver.fail_lookup("target.com");
+
+        let error = check_error(&mock_resolver, "example.com", "target.com").await;
+
+        assert_eq!(error, "DNS_LOOKUP_FAILED");
+    }
+
+    #[tokio::test]
+    async fn test_invalid_record_fails_the_check() {
+        let mock_resolver = MockResolver::new();
+        mock_resolver.add_record("example.com", "v=spf1 ip4:300.0.0.1 ~all");
+
+        let error = check_error(&mock_resolver, "example.com", "target.com").await;
+
+        assert_eq!(error, "SPF_PARSE_FAILED");
+    }
+
     fn add_include_chain(mock_resolver: &MockResolver, root_domain: &str, includes: usize) {
         let mut current = root_domain.to_string();
 
@@ -585,16 +672,43 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_lookup_limit_exceeded() {
+    async fn test_lookup_limit_stops_resolving_further_includes() {
         let mock_resolver = MockResolver::new();
         mock_resolver.add_record("target.com", "v=spf1 ip4:192.0.2.10 -all");
         add_include_chain(&mock_resolver, "example.com", DNS_LOOKUP_LIMIT + 1);
 
-        let error = SpfChecker::new(mock_resolver.clone())
-            .check(&"example.com".to_string(), &"target.com".to_string())
-            .await
-            .unwrap_err();
+        let result = check(&mock_resolver, "example.com", "target.com").await;
 
-        assert_eq!(error.to_string(), "DNS_LOOKUP_LIMIT_EXCEEDED");
+        assert!(!result.found);
+        assert_eq!(result.visited, DNS_LOOKUP_LIMIT + 2);
+    }
+
+    #[tokio::test]
+    async fn test_lookup_limit_keeps_records_collected_before_the_limit() {
+        let mock_resolver = MockResolver::new();
+        mock_resolver.add_record("target.com", "v=spf1 ip4:192.0.2.10 -all");
+        add_include_chain(&mock_resolver, "_chain.example.com", DNS_LOOKUP_LIMIT + 1);
+        mock_resolver.add_record(
+            "example.com",
+            "v=spf1 ip4:192.0.2.10 include:_chain.example.com ~all",
+        );
+
+        let result = check(&mock_resolver, "example.com", "target.com").await;
+
+        assert!(result.found);
+    }
+
+    #[tokio::test]
+    async fn test_lookup_limit_keeps_included_target_found_before_the_limit() {
+        let mock_resolver = MockResolver::new();
+        add_include_chain(&mock_resolver, "_chain.example.com", DNS_LOOKUP_LIMIT + 1);
+        mock_resolver.add_record(
+            "example.com",
+            "v=spf1 include:_chain.example.com include:target.com ~all",
+        );
+
+        let result = check(&mock_resolver, "example.com", "target.com").await;
+
+        assert!(result.found);
     }
 }

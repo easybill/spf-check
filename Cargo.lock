@@ -926,6 +926,7 @@ dependencies = [
  "decon-spf",
  "ipnetwork 0.21.1",
  "tokio",
+ "trust-dns-proto",
  "trust-dns-resolver",
 ]
 
