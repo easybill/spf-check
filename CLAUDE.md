@@ -34,7 +34,6 @@ spf-check/
 │   └── fake_dns/
 │       ├── Cargo.toml                  # test helper `fake_dns` (publish = false)
 │       └── src/lib.rs                  # minimal DNS server on localhost for tests
-├── spf-check.http                      # manual HTTP requests (JetBrains/VSCode REST client)
 ├── test-service.js                     # external Node.js smoke-test script
 ├── Dockerfile, docker-compose.yml
 └── .github/workflows/                  # test.yml, clippy.yml, publish.yml, update-dockerhub-readme.yml
@@ -75,7 +74,6 @@ Domain names are normalized (`normalize_domain`: trimmed, trailing dot removed, 
 - **Run the service**: `cargo run` — listens on `0.0.0.0:8080` by default; override with `LISTEN_ADDR=<ip>:<port>`.
 - **UI**: open `http://localhost:8080/ui` in the browser.
 - **Health probe**: `GET http://localhost:8080/health` returns 200.
-- **Manual API tests**: `spf-check.http` (REST-client compatible).
 - **External smoke test**: `node test-service.js` (Node.js, hits the running service).
 - **Release build**: `cargo build --release` then `./target/release/spf-check`.
 - **Lint**: `cargo clippy --workspace --all-targets -- -D warnings`.
