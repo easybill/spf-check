@@ -19,7 +19,7 @@ impl SpnResolver for TokioAsyncResolver {
 
         Ok(response.iter().find_map(|record| {
             let txt = record.to_string();
-            txt.starts_with("v=spf1").then_some(txt)
+            txt.starts_with("v=spf1 ").then_some(txt)
         }))
     }
 }
