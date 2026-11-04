@@ -118,6 +118,11 @@ The service will listen on `0.0.0.0:8080` by default.
 LISTEN_ADDR=127.0.0.1:3000 ./target/release/spf-check
 ```
 
+### Testing
+Der webserver wird "manuell" mit test-service.js getestet. Für die innere Funktionalität lässt sich `cargo test` verwenden.
+
+Es bietet sich an, direkt coverage zu erstellen. Dafür `cargo install cargo-llvm-cov`, und dann `cargo llvm-cov --workspace --open --output-dir=coverage`.
+
 ## Performance
 
 - Asynchronous processing allows handling multiple requests simultaneously
