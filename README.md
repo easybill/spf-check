@@ -89,6 +89,12 @@ Check if outlook.com's SPF is included in example.com's SPF chain:
 curl "http://localhost:8080/api/v1/check-spf?domain=example.com&target=spf.protection.outlook.com"
 ```
 
+And an example that should actually come back positive, check if the SPF chain of `easybill.de` includes `_spf.easybill.de`:
+```bash
+curl "http://localhost:8080/api/v1/check-spf?domain=easybill.de&target=_spf.easybill.de"
+```
+
+
 ## Installation
 
 1. Ensure you have Rust installed
