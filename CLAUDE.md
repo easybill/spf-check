@@ -14,10 +14,11 @@ Built on `axum` (HTTP), `tokio` (async runtime), `trust-dns-resolver` (DNS), `de
 
 ## Repository Layout
 
-This is a **Cargo workspace** with two crates:
+This is a **Cargo workspace** with three crates:
 
 - The **binary** `spf-check` at the workspace root (axum HTTP service).
 - The **library** `spf_checker` under `crates/spf_checker/` (core SPF resolution logic, reusable as a standalone library).
+- The **test helper** `fake_dns` under `crates/fake_dns/` (unpublished, used only as a dev-dependency; see "Testing & Benchmarking").
 
 ```
 spf-check/
@@ -26,9 +27,13 @@ spf-check/
 │   ├── main.rs                         # axum server, routing, HTTP handlers, response types
 │   └── html/ui.html                    # UI, embedded at compile time via include_str!
 ├── crates/
-│   └── spf_checker/
-│       ├── Cargo.toml                  # library `spf_checker`
-│       └── src/lib.rs                  # SpfChecker + SpnResolver trait + tests
+│   ├── spf_checker/
+│   │   ├── Cargo.toml                  # library `spf_checker`
+│   │   ├── src/lib.rs                  # SpfChecker + SpnResolver trait + tests
+│   │   └── tests/tokio_resolver.rs     # TokioAsyncResolver against the fake DNS server
+│   └── fake_dns/
+│       ├── Cargo.toml                  # test helper `fake_dns` (publish = false)
+│       └── src/lib.rs                  # minimal DNS server on localhost for tests
 ├── spf-check.http                      # manual HTTP requests (JetBrains/VSCode REST client)
 ├── test-service.js                     # external Node.js smoke-test script
 ├── Dockerfile, docker-compose.yml
@@ -61,7 +66,9 @@ A `target` is considered "covered" by `domain` if **either**:
 
 `a`, `mx`, `ptr` and `exists` mechanisms are **intentionally not resolved**.
 
-`fallback_check` in `CheckResult` and in the API response is kept for compatibility only and is always `false`; the former string-based fallback check no longer exists.
+`fallback_check` in `CheckResult` and in the API response is `true` whenever the target was not included by name and the IP networks were compared, regardless of the outcome. It is `false` when the target was found by name.
+
+Domain names are normalized (`normalize_domain`: trimmed, trailing dot removed, lowercased) both for the `domain`/`target` input and for `include:`/`redirect=` values read from records, since DNS names are case-insensitive.
 
 ## Development Workflow
 
@@ -76,7 +83,7 @@ A `target` is considered "covered" by `domain` if **either**:
 
 ## API Contract
 
-`GET /api/v1/check-spf?domain={domain}&target={target}` — both query parameters are required.
+`GET /api/v1/check-spf?domain={domain}&target={target}` — both query parameters are required. Both are normalized with `normalize_domain` before the check, and the response echoes the normalized values.
 
 **Success (`200 OK`)** — JSON body matching `SpfCheckResponse` in `main.rs`:
 
@@ -93,6 +100,8 @@ A `target` is considered "covered" by `domain` if **either**:
   "fallback_check": false
 }
 ```
+
+**Invalid input (`400 BAD_REQUEST`)** — a missing parameter (rejected by axum), or a `domain`/`target` that is empty after normalization. The latter returns `{ "error": "INVALID_DOMAIN" }`.
 
 **Failure (`404 NOT_FOUND`)** — currently used for any resolution error (DNS failure, SPF parse failure, multiple SPF records). Body: `{ "error": "<message>" }`. The status mapping is intentionally coarse today; revisit if richer client-side error handling is needed.
 
@@ -112,8 +121,8 @@ A `target` is considered "covered" by `domain` if **either**:
 ## Testing & Benchmarking
 
 - **Unit tests** belong next to the module under `#[cfg(test)] mod tests` and must use the `SpnResolver` trait with a mock (see `MockResolver` in `crates/spf_checker/src/lib.rs`). Never hit real DNS in unit tests.
-- The `TokioAsyncResolver` implementation of `SpnResolver` cannot be tested with the mock. It is tested in `crates/spf_checker/tests/tokio_resolver.rs` against a minimal fake DNS server on localhost (built with `trust-dns-proto`), so it does not hit real DNS either.
-- **Integration tests** belong in a dedicated top-level `tests/` directory (create it on first need). The pre-existing `#[tokio::test]` in `main.rs` that hits real DNS is legacy; migrate it to `tests/` and replace it with a mock-backed variant when convenient.
+- Code that needs a real `TokioAsyncResolver` uses the `fake_dns` crate instead of real DNS: `fake_dns::resolver(zone)` starts a minimal DNS server on localhost that answers TXT queries from a fixed zone (NXDOMAIN otherwise) and returns a resolver that only queries it. This covers the `TokioAsyncResolver` implementation of `SpnResolver` (`crates/spf_checker/tests/tokio_resolver.rs`) and the HTTP handler tests in `main.rs`, which build the router with `app(SpfChecker::new(resolver))`.
+- **Integration tests** belong in a dedicated top-level `tests/` directory (create it on first need). The HTTP tests stay in `main.rs` for now, because a binary crate's private items (such as `app`) are not reachable from `tests/`.
 - **Benchmarks**: there is no `benches/` directory yet. Add one (with `criterion` or similar) before relying on `cargo bench`.
 - Performance budgets are not formally defined. Until they are, treat regressions in `elapsed_ms` from the existing handler tests as the informal signal.
 

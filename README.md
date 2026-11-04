@@ -46,13 +46,13 @@ GET /api/v1/check-spf?domain={domain}&target={target}
 
 - `found`: Boolean indicating if the target was found in the SPF chain
 - `checked_domains`: Number of domains checked in the process
-- `domain`: The original domain that was checked
-- `target`: The domain that was searched for
+- `domain`: The domain that was checked, normalized (lowercase, without surrounding whitespace or trailing dot)
+- `target`: The domain that was searched for, normalized the same way
 - `elapsed_ms`: Time taken for the check in milliseconds
 - `has_spf_record`: Boolean indicating if the domain has an SPF record
 - `spf_record`: The complete SPF record of the main domain (if exists, otherwise `null`)
 - `included_domains`: List of domains included in the main SPF record (if exists, otherwise `null`)
-- `fallback_check`: Boolean indicating if a fallback check was performed (if the target was not found in the SPF record)
+- `fallback_check`: `true` if the target was not included by name, so the IP networks (`ip4`/`ip6`) of both SPF chains were compared to determine `found`; `false` if the target was found by name
 
 #### Error Response
 
@@ -63,6 +63,7 @@ GET /api/v1/check-spf?domain={domain}&target={target}
 ```
 
 Common error codes:
+- `INVALID_DOMAIN` (`400 Bad Request`): `domain` or `target` is empty
 - `DNS_LOOKUP_FAILED`: Unable to perform DNS lookup or `TXT` record does not exist
 - `SPF_PARSE_FAILED`: Invalid SPF record format
 - `MULTIPLE_SPF_RECORDS`: The domain publishes more than one SPF record, which receivers treat as a `permerror` (RFC 7208, section 4.5)

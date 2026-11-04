@@ -61,9 +61,13 @@ pub struct CheckResult {
     pub spf_record: Option<String>,
     /// Every `include:` domain found while following the checked domain's SPF chain.
     pub included_domains: Option<Vec<String>>,
-    /// Kept for API compatibility. The string-based fallback check no longer exists,
-    /// so this is always `false`.
+    /// Whether the target was not included by name, so the IP networks of both chains were
+    /// compared to determine `found`.
     pub fallback_check: bool,
+}
+
+pub fn normalize_domain(domain: &str) -> String {
+    domain.trim().trim_end_matches('.').to_ascii_lowercase()
 }
 
 /// https://datatracker.ietf.org/doc/html/rfc7208#section-4.6.4
@@ -124,10 +128,13 @@ impl SpfChecker {
         }
     }
 
-    pub async fn check(&self, root_domain: &String, target: &String) -> Result<CheckResult> {
-        let root = self.resolve(root_domain).await?;
+    pub async fn check(&self, root_domain: &str, target: &str) -> Result<CheckResult> {
+        let root_domain = normalize_domain(root_domain);
+        let target = normalize_domain(target);
 
-        if root.included_domains.contains(target) {
+        let root = self.resolve(&root_domain).await?;
+
+        if root.included_domains.contains(&target) {
             return Ok(CheckResult {
                 found: true,
                 visited: root.visited,
@@ -137,7 +144,7 @@ impl SpfChecker {
             });
         }
 
-        let target_spf = self.resolve(target).await?;
+        let target_spf = self.resolve(&target).await?;
 
         let uncovered: Vec<&IpNetwork> = target_spf
             .networks
@@ -159,7 +166,7 @@ impl SpfChecker {
             visited: root.visited + target_spf.visited,
             spf_record: root.record,
             included_domains: Some(root.included_domains),
-            fallback_check: false,
+            fallback_check: true,
         })
     }
 
@@ -202,11 +209,11 @@ impl SpfChecker {
                 if kind.is_all() {
                     has_all = true;
                 } else if kind.is_redirect() {
-                    redirect = Some(mechanism.raw());
+                    redirect = Some(normalize_domain(&mechanism.raw()));
                 } else if !mechanism.qualifier().is_pass() {
                     continue;
                 } else if kind.is_include() {
-                    includes.push(mechanism.raw());
+                    includes.push(normalize_domain(&mechanism.raw()));
                 } else if kind.is_ip() {
                     // `Spf::from_str` already rejects invalid `ip4`/`ip6` values, so parsing
                     // the validated value again cannot fail.
@@ -347,7 +354,7 @@ mod tests {
 
     async fn check(mock_resolver: &MockResolver, root_domain: &str, target: &str) -> CheckResult {
         SpfChecker::new(mock_resolver.clone())
-            .check(&root_domain.to_string(), &target.to_string())
+            .check(root_domain, target)
             .await
             .unwrap()
     }
@@ -392,7 +399,7 @@ mod tests {
             result.included_domains,
             Some(vec!["mail.easybill.de".to_string()])
         );
-        assert!(!result.fallback_check);
+        assert!(result.fallback_check);
     }
 
     #[tokio::test]
@@ -447,7 +454,7 @@ mod tests {
             Some("v=spf1 redirect=auc-online.de.spf.hornetdmarc.com".to_string()),
         );
         assert_eq!(result.included_domains, Some(vec![]));
-        assert!(!result.fallback_check);
+        assert!(result.fallback_check);
     }
 
     #[tokio::test]
@@ -472,7 +479,7 @@ mod tests {
             result.included_domains,
             Some(vec!["mail.easybill.de".to_string()])
         );
-        assert!(!result.fallback_check);
+        assert!(result.fallback_check);
     }
 
     #[tokio::test]
@@ -489,7 +496,7 @@ mod tests {
         let result = check(&mock_resolver, "example.com", "target.com").await;
 
         assert!(result.found);
-        assert!(!result.fallback_check);
+        assert!(result.fallback_check);
     }
 
     #[tokio::test]
@@ -581,9 +588,56 @@ mod tests {
         assert!(!result.found);
     }
 
+    #[test]
+    fn test_normalize_domain() {
+        assert_eq!(
+            normalize_domain(" SPF.Easybill-Mail.de. "),
+            "spf.easybill-mail.de"
+        );
+        assert_eq!(normalize_domain("example.com"), "example.com");
+        assert_eq!(normalize_domain(" . "), "");
+    }
+
+    #[tokio::test]
+    async fn test_input_domains_are_normalized() {
+        let mock_resolver = MockResolver::new();
+        mock_resolver.add_record("example.com", "v=spf1 include:spf.easybill-mail.de ~all");
+
+        let result = check(&mock_resolver, " Example.COM. ", "SPF.easybill-mail.de.").await;
+
+        assert!(result.found);
+        assert!(!result.fallback_check);
+        assert_eq!(
+            result.spf_record,
+            Some("v=spf1 include:spf.easybill-mail.de ~all".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn test_domains_in_records_are_normalized() {
+        let mock_resolver = MockResolver::new();
+        mock_resolver.add_record("target.com", "v=spf1 ip4:192.0.2.10 -all");
+        mock_resolver.add_record(
+            "example.com",
+            "v=spf1 include:SPF.Easybill-Mail.de. redirect=_SPF.Example.com.",
+        );
+        mock_resolver.add_record("_spf.example.com", "v=spf1 ip4:192.0.2.10 ~all");
+
+        let by_name = check(&mock_resolver, "example.com", "spf.easybill-mail.de").await;
+        let by_ip = check(&mock_resolver, "example.com", "target.com").await;
+
+        assert!(by_name.found);
+        assert_eq!(
+            by_name.included_domains,
+            Some(vec!["spf.easybill-mail.de".to_string()])
+        );
+        assert!(by_ip.found);
+        assert!(by_ip.fallback_check);
+    }
+
     async fn check_error(mock_resolver: &MockResolver, root_domain: &str, target: &str) -> String {
         SpfChecker::new(mock_resolver.clone())
-            .check(&root_domain.to_string(), &target.to_string())
+            .check(root_domain, target)
             .await
             .unwrap_err()
             .to_string()

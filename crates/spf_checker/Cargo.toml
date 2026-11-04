@@ -15,5 +15,5 @@ ipnetwork = "0.21.1"
 trust-dns-resolver = { version = "0.23.2", features = ["tokio-runtime"] }
 
 [dev-dependencies]
-trust-dns-proto = "0.23.2"
+fake_dns = { path = "../fake_dns" }
 tokio = { version = "1.52.1", features = ["full"] }

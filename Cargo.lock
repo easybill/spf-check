@@ -204,6 +204,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "fake_dns"
+version = "0.1.0"
+dependencies = [
+ "tokio",
+ "trust-dns-proto",
+ "trust-dns-resolver",
+]
+
+[[package]]
 name = "find-msvc-tools"
 version = "0.1.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -908,8 +917,10 @@ dependencies = [
  "anyhow",
  "axum",
  "chrono",
+ "fake_dns",
  "http",
  "serde",
+ "serde_json",
  "spf_checker",
  "tokio",
  "tower",
@@ -924,9 +935,9 @@ dependencies = [
  "async-trait",
  "chrono",
  "decon-spf",
+ "fake_dns",
  "ipnetwork 0.21.1",
  "tokio",
- "trust-dns-proto",
  "trust-dns-resolver",
 ]
 

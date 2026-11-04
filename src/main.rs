@@ -8,7 +8,7 @@ use axum::{
     Router,
 };
 use serde::{Deserialize, Serialize};
-use spf_checker::{CheckResult, SpfChecker};
+use spf_checker::{normalize_domain, CheckResult, SpfChecker};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use tokio::net::TcpListener;
 use trust_dns_resolver::config::{ResolverConfig, ResolverOpts};
@@ -57,6 +57,19 @@ fn log_message(msg: impl AsRef<str>) {
 async fn check_spf(Query(params): Query<SpfCheckParams>, checker: State<SpfChecker>) -> Response {
     let start = std::time::Instant::now();
 
+    let params = SpfCheckParams {
+        domain: normalize_domain(&params.domain),
+        target: normalize_domain(&params.target),
+    };
+
+    if params.domain.is_empty() || params.target.is_empty() {
+        let error = ErrorResponse {
+            error: "INVALID_DOMAIN".to_string(),
+        };
+
+        return (StatusCode::BAD_REQUEST, Json(error)).into_response();
+    }
+
     match checker.check(&params.domain, &params.target).await {
         Ok(CheckResult {
             found,
@@ -70,14 +83,14 @@ async fn check_spf(Query(params): Query<SpfCheckParams>, checker: State<SpfCheck
             let status_msg = match (fallback_check, found) {
                 (true, true) => {
                     format!(
-                        "Successfully found all mechanisms from \"{}\" in \"{}\" via fallback check ({}ms)",
-                        params.target, params.domain, elapsed_ms
+                        "\"{}\" covers all IP networks of \"{}\" ({}ms)",
+                        params.domain, params.target, elapsed_ms
                     )
                 }
                 (true, false) => {
                     format!(
-                        "Fallback check completed for \"{}\" in \"{}\" - not all mechanisms found ({}ms)",
-                        params.target, params.domain, elapsed_ms
+                        "\"{}\" does not cover all IP networks of \"{}\" ({}ms)",
+                        params.domain, params.target, elapsed_ms
                     )
                 }
                 (false, _) => {
@@ -132,12 +145,12 @@ fn create_tokio_async_resolver() -> TokioAsyncResolver {
     TokioAsyncResolver::tokio(ResolverConfig::default(), opts)
 }
 
-fn app() -> Router {
+fn app(checker: SpfChecker) -> Router {
     Router::new()
         .route("/health", get(health))
         .route("/api/v1/check-spf", get(check_spf))
         .route("/ui", get(serve_ui))
-        .with_state(SpfChecker::new(create_tokio_async_resolver()))
+        .with_state(checker)
 }
 
 fn parse_listen_addr(value: Option<&str>) -> Result<SocketAddr> {
@@ -168,7 +181,11 @@ async fn main() -> Result<()> {
     let listener = TcpListener::bind(addr)
         .await
         .with_context(|| format!("Failed to bind to {addr}"))?;
-    axum::serve(listener, app()).await?;
+    axum::serve(
+        listener,
+        app(SpfChecker::new(create_tokio_async_resolver())),
+    )
+    .await?;
 
     Ok(())
 }
@@ -205,21 +222,126 @@ mod tests {
         assert!(parse_listen_addr(Some("127.0.0.1:99999")).is_err());
     }
 
-    #[tokio::test]
-    #[ignore = "An example for integration test against axum. Not yet fully implemented"]
-    async fn test_check_spf_with_provided_domains() {
-        let app = app();
+    /// The real-world setups from the library tests: one customer including easybill by name,
+    /// one redirecting to a flattened record that lists easybill's IP directly.
+    async fn test_app() -> Router {
+        let resolver = fake_dns::resolver(fake_dns::Zone::from([
+            (
+                "spf.easybill-mail.de",
+                vec![vec!["v=spf1 include:ipv4.spf.easybill-mail.de"]],
+            ),
+            (
+                "ipv4.spf.easybill-mail.de",
+                vec![vec!["v=spf1 ip4:167.235.178.61"]],
+            ),
+            (
+                "example.com",
+                vec![vec!["v=spf1 include:spf.easybill-mail.de ~all"]],
+            ),
+            (
+                "auc-online.de",
+                vec![vec!["v=spf1 redirect=auc-online.de.spf.hornetdmarc.com"]],
+            ),
+            (
+                "auc-online.de.spf.hornetdmarc.com",
+                vec![vec!["v=spf1 ip4:167.235.178.61 ~all"]],
+            ),
+            ("other.com", vec![vec!["v=spf1 ip4:192.0.2.10 -all"]]),
+        ]))
+        .await;
 
-        let url = format!(
-            "/api/v1/check-spf?domain={}&target={}",
-            "auc-online.de", "spf.easybill-mail.de"
-        );
+        app(SpfChecker::new(resolver))
+    }
 
-        let response = app
-            .oneshot(Request::get(url).body(Body::empty()).unwrap())
+    async fn get_json(uri: &str) -> (StatusCode, serde_json::Value) {
+        let response = test_app()
+            .await
+            .oneshot(Request::get(uri).body(Body::empty()).unwrap())
             .await
             .unwrap();
 
-        assert_eq!(response.status(), StatusCode::OK);
+        let status = response.status();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+
+        (status, serde_json::from_slice(&body).unwrap())
+    }
+
+    #[tokio::test]
+    async fn test_check_spf_found_by_include() {
+        let (status, body) =
+            get_json("/api/v1/check-spf?domain=example.com&target=spf.easybill-mail.de").await;
+
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["found"], true);
+        assert_eq!(body["fallback_check"], false);
+        assert_eq!(body["domain"], "example.com");
+        assert_eq!(body["target"], "spf.easybill-mail.de");
+        assert_eq!(body["has_spf_record"], true);
+        assert_eq!(
+            body["spf_record"],
+            "v=spf1 include:spf.easybill-mail.de ~all"
+        );
+        assert_eq!(
+            body["included_domains"],
+            serde_json::json!(["spf.easybill-mail.de", "ipv4.spf.easybill-mail.de"])
+        );
+        assert_eq!(body["checked_domains"], 3);
+    }
+
+    #[tokio::test]
+    async fn test_check_spf_found_by_ip() {
+        let (status, body) =
+            get_json("/api/v1/check-spf?domain=auc-online.de&target=spf.easybill-mail.de").await;
+
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["found"], true);
+        assert_eq!(body["fallback_check"], true);
+        assert_eq!(body["included_domains"], serde_json::json!([]));
+        assert_eq!(body["checked_domains"], 4);
+    }
+
+    #[tokio::test]
+    async fn test_check_spf_not_found() {
+        let (status, body) =
+            get_json("/api/v1/check-spf?domain=other.com&target=spf.easybill-mail.de").await;
+
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["found"], false);
+        assert_eq!(body["fallback_check"], true);
+    }
+
+    #[tokio::test]
+    async fn test_check_spf_normalizes_domains() {
+        let (status, body) =
+            get_json("/api/v1/check-spf?domain=%20Example.COM.&target=SPF.Easybill-Mail.de.").await;
+
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["found"], true);
+        assert_eq!(body["domain"], "example.com");
+        assert_eq!(body["target"], "spf.easybill-mail.de");
+    }
+
+    #[tokio::test]
+    async fn test_check_spf_rejects_empty_domains() {
+        for uri in [
+            "/api/v1/check-spf?domain=&target=spf.easybill-mail.de",
+            "/api/v1/check-spf?domain=example.com&target=%20.%20",
+        ] {
+            let (status, body) = get_json(uri).await;
+
+            assert_eq!(status, StatusCode::BAD_REQUEST);
+            assert_eq!(body["error"], "INVALID_DOMAIN");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_check_spf_reports_lookup_failure() {
+        let (status, body) =
+            get_json("/api/v1/check-spf?domain=unknown.example&target=spf.easybill-mail.de").await;
+
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(body["error"], "DNS_LOOKUP_FAILED");
     }
 }
