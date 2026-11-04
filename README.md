@@ -65,6 +65,7 @@ GET /api/v1/check-spf?domain={domain}&target={target}
 Common error codes:
 - `DNS_LOOKUP_FAILED`: Unable to perform DNS lookup or `TXT` record does not exist
 - `SPF_PARSE_FAILED`: Invalid SPF record format
+- `MULTIPLE_SPF_RECORDS`: The domain publishes more than one SPF record, which receivers treat as a `permerror` (RFC 7208, section 4.5)
 
 ### Health Check
 

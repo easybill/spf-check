@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
 use decon_spf::Spf;
 use std::collections::HashSet;
@@ -17,11 +17,37 @@ impl SpnResolver for TokioAsyncResolver {
     async fn find_spf_record(&self, domain: &str) -> Result<Option<String>> {
         let response = self.txt_lookup(domain).await.context("DNS_LOOKUP_FAILED")?;
 
-        Ok(response.iter().find_map(|record| {
-            let txt = record.to_string();
-            txt.starts_with("v=spf1 ").then_some(txt)
-        }))
+        // A single TXT record may consist of several character-strings (each at most
+        // 255 bytes); RFC 7208, section 3.3 requires joining them without a separator.
+        let txt_records = response.iter().map(|record| {
+            record
+                .txt_data()
+                .iter()
+                .map(|chunk| String::from_utf8_lossy(chunk))
+                .collect::<String>()
+        });
+
+        select_single_spf_record(txt_records)
     }
+}
+
+fn is_spf_record(txt: &str) -> bool {
+    txt == "v=spf1" || txt.starts_with("v=spf1 ")
+}
+
+
+fn select_single_spf_record(
+    txt_records: impl IntoIterator<Item = String>,
+) -> Result<Option<String>> {
+    let mut spf_records = txt_records.into_iter().filter(|txt| is_spf_record(txt));
+
+    let first = spf_records.next();
+
+    if spf_records.next().is_some() {
+        bail!("MULTIPLE_SPF_RECORDS");
+    }
+
+    Ok(first)
 }
 
 pub struct CheckResult {
@@ -324,6 +350,65 @@ mod tests {
             let records = self.records.lock().expect("mutex poisoned");
             Ok(records.get(domain).cloned())
         }
+    }
+
+    fn txt_records(records: &[&str]) -> Vec<String> {
+        records.iter().map(|record| record.to_string()).collect()
+    }
+
+    #[test]
+    fn test_select_single_spf_record_among_other_txt_records() {
+        let records = txt_records(&[
+            "google-site-verification=abc123",
+            "v=spf1 include:spf.easybill-mail.de ~all",
+            "MS=ms12345678",
+        ]);
+
+        let result = select_single_spf_record(records).unwrap();
+
+        assert_eq!(
+            result,
+            Some("v=spf1 include:spf.easybill-mail.de ~all".to_string())
+        );
+    }
+
+    #[test]
+    fn test_select_single_spf_record_without_spf_record() {
+        let records = txt_records(&["google-site-verification=abc123"]);
+
+        let result = select_single_spf_record(records).unwrap();
+
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_select_single_spf_record_rejects_multiple_spf_records() {
+        let records = txt_records(&[
+            "v=spf1 include:_spf.google.com ~all",
+            "v=spf1 include:spf.easybill-mail.de ~all",
+        ]);
+
+        let error = select_single_spf_record(records).unwrap_err();
+
+        assert_eq!(error.to_string(), "MULTIPLE_SPF_RECORDS");
+    }
+
+    #[test]
+    fn test_select_single_spf_record_ignores_other_versions() {
+        let records = txt_records(&["v=spf10 ip4:192.0.2.1", "v=spf1 ip4:192.0.2.2 -all"]);
+
+        let result = select_single_spf_record(records).unwrap();
+
+        assert_eq!(result, Some("v=spf1 ip4:192.0.2.2 -all".to_string()));
+    }
+
+    #[test]
+    fn test_select_single_spf_record_accepts_bare_version() {
+        let records = txt_records(&["v=spf1"]);
+
+        let result = select_single_spf_record(records).unwrap();
+
+        assert_eq!(result, Some("v=spf1".to_string()));
     }
 
     #[tokio::test]
