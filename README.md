@@ -89,6 +89,12 @@ Check if outlook.com's SPF is included in example.com's SPF chain:
 curl "http://localhost:8080/api/v1/check-spf?domain=example.com&target=spf.protection.outlook.com"
 ```
 
+And an example that should actually come back positive, check if the SPF chain of `easybill.de` includes `_spf.easybill.de`:
+```bash
+curl "http://localhost:8080/api/v1/check-spf?domain=easybill.de&target=_spf.easybill.de"
+```
+
+
 ## Installation
 
 1. Ensure you have Rust installed
@@ -101,6 +107,19 @@ cargo build --release
 ```
 
 The service will listen on `0.0.0.0:8080` by default.
+
+## Configuration
+
+| Environment variable | Default        | Description                                                                 |
+|----------------------|----------------|-----------------------------------------------------------------------------|
+| `LISTEN_ADDR`        | `0.0.0.0:8080` | Socket address to listen on, as `<ip>:<port>` (e.g. `127.0.0.1:3000`, `[::]:8080`). |
+
+```bash
+LISTEN_ADDR=127.0.0.1:3000 ./target/release/spf-check
+```
+
+### Testing
+Es bietet sich an, direkt coverage zu erstellen. Dafür `cargo install cargo-llvm-cov`, und dann `cargo llvm-cov --workspace --open --output-dir=coverage`.
 
 ## Performance
 

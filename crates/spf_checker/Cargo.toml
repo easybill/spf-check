@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0.102"
-async-trait = "0.1.89"
+async-trait = "0.1.92"
 chrono = "0.4.44"
 # TODO: Use original crate when bugfix is released
 decon-spf = { git = "https://github.com/coreequip/rust-decon-spf" }

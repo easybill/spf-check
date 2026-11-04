@@ -1,4 +1,4 @@
-use spf_checker::{CheckResult, SpfChecker};
+use anyhow::Context;
 use axum::response::Html;
 use axum::{
     extract::{Query, State},
@@ -8,13 +8,17 @@ use axum::{
     Router,
 };
 use serde::{Deserialize, Serialize};
-use std::net::SocketAddr;
+use spf_checker::{CheckResult, SpfChecker};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use tokio::net::TcpListener;
 use trust_dns_resolver::config::{ResolverConfig, ResolverOpts};
 use trust_dns_resolver::TokioAsyncResolver;
 
 static CARGO_PKG_NAME: &str = env!("CARGO_PKG_NAME");
 static CARGO_PKG_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+const LISTEN_ADDR_ENV: &str = "LISTEN_ADDR";
+const DEFAULT_LISTEN_ADDR: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8080);
 
 type Result<T> = anyhow::Result<T>;
 
@@ -136,6 +140,19 @@ fn app() -> Router {
         .with_state(SpfChecker::new(create_tokio_async_resolver()))
 }
 
+fn parse_listen_addr(value: Option<&str>) -> Result<SocketAddr> {
+    match value.map(str::trim).filter(|v| !v.is_empty()) {
+        None => Ok(DEFAULT_LISTEN_ADDR),
+        Some(v) => v.parse().with_context(|| {
+            format!("Invalid {LISTEN_ADDR_ENV} \"{v}\", expected <ip>:<port> (e.g. 127.0.0.1:8080 or [::]:8080)")
+        }),
+    }
+}
+
+fn listen_addr_from_env() -> Result<SocketAddr> {
+    parse_listen_addr(std::env::var(LISTEN_ADDR_ENV).ok().as_deref())
+}
+
 async fn serve_ui() -> Html<&'static str> {
     Html(include_str!("html/ui.html"))
 }
@@ -144,11 +161,13 @@ async fn serve_ui() -> Html<&'static str> {
 async fn main() -> Result<()> {
     log_message(format!("> {CARGO_PKG_NAME} v{CARGO_PKG_VERSION}"));
 
-    let addr = SocketAddr::from(([0, 0, 0, 0], 8080));
+    let addr = listen_addr_from_env()?;
 
     log_message(format!("Listening on {}", addr));
 
-    let listener = TcpListener::bind(addr).await?;
+    let listener = TcpListener::bind(addr)
+        .await
+        .with_context(|| format!("Failed to bind to {addr}"))?;
     axum::serve(listener, app()).await?;
 
     Ok(())
@@ -158,18 +177,43 @@ async fn main() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::{
-        body::Body,
-        http::Request,
-    };
+    use axum::{body::Body, http::Request};
     use tower::ServiceExt;
+
+    #[test]
+    fn listen_addr_defaults_when_unset_or_blank() {
+        assert_eq!(parse_listen_addr(None).unwrap(), DEFAULT_LISTEN_ADDR);
+        assert_eq!(parse_listen_addr(Some("  ")).unwrap(), DEFAULT_LISTEN_ADDR);
+    }
+
+    #[test]
+    fn listen_addr_parses_ipv4_and_ipv6() {
+        assert_eq!(
+            parse_listen_addr(Some("127.0.0.1:3000")).unwrap(),
+            SocketAddr::from(([127, 0, 0, 1], 3000))
+        );
+        assert_eq!(
+            parse_listen_addr(Some("[::1]:9000")).unwrap(),
+            "[::1]:9000".parse::<SocketAddr>().unwrap()
+        );
+    }
+
+    #[test]
+    fn listen_addr_rejects_invalid_values() {
+        assert!(parse_listen_addr(Some("localhost:8080")).is_err());
+        assert!(parse_listen_addr(Some("127.0.0.1")).is_err());
+        assert!(parse_listen_addr(Some("127.0.0.1:99999")).is_err());
+    }
 
     #[tokio::test]
     #[ignore = "An example for integration test against axum. Not yet fully implemented"]
     async fn test_check_spf_with_provided_domains() {
         let app = app();
 
-        let url = format!("/api/v1/check-spf?domain={}&target={}", "auc-online.de", "spf.easybill-mail.de");
+        let url = format!(
+            "/api/v1/check-spf?domain={}&target={}",
+            "auc-online.de", "spf.easybill-mail.de"
+        );
 
         let response = app
             .oneshot(Request::get(url).body(Body::empty()).unwrap())
@@ -178,5 +222,4 @@ mod tests {
 
         assert_eq!(response.status(), StatusCode::OK);
     }
-
 }
