@@ -40,37 +40,28 @@ There is currently **no top-level `tests/` directory and no `benches/` directory
 ### Module Map
 
 - **`src/main.rs`** (binary `spf-check`) — server bootstrap (listen address from `LISTEN_ADDR`, default `0.0.0.0:8080`), axum router, request/response structs (`SpfCheckParams`, `SpfCheckResponse`, `ErrorResponse`), `log_message` helper, and the `TokioAsyncResolver` factory. Depends on `spf_checker` via path dependency.
-- **`crates/spf_checker/src/lib.rs`** (library `spf_checker`) — `SpfChecker` struct holding an `Arc<dyn SpnResolver + Send + Sync>`. The `SpnResolver` trait abstracts DNS so tests can substitute a `MockResolver` instead of hitting real DNS. `TokioAsyncResolver` implements `SpnResolver` for production. `DNS_LOOKUP_LIMIT = 10` enforces the SPF lookup budget. SPF-specific dependencies (`decon-spf`, `async-trait`, `trust-dns-resolver`) live here.
+- **`crates/spf_checker/src/lib.rs`** (library `spf_checker`) — `SpfChecker` struct holding an `Arc<dyn SpnResolver + Send + Sync>`. The `SpnResolver` trait abstracts DNS so tests can substitute a `MockResolver` instead of hitting real DNS. `TokioAsyncResolver` implements `SpnResolver` for production. `DNS_LOOKUP_LIMIT = 10` enforces the SPF lookup budget. SPF-specific dependencies (`decon-spf`, `ipnetwork`, `async-trait`, `trust-dns-resolver`) live here.
 - **`src/html/ui.html`** — a self-contained HTML page; no separate frontend build step.
 
-## Current Behavior (legacy)
+## Check Behavior
 
-Today the service walks the `domain`'s SPF `include:` chain recursively and reports `found = true` if the literal `target` domain appears anywhere in that chain. It is a *string-level inclusion check* over include references (`check_direct_include`), with a fallback (`check_target_mechanisms`) that compares raw mechanism strings between the target's and domain's SPF records.
-
-## Target Behavior (where we are heading)
-
-The semantic is changing. Going forward the check must verify that **all `ip4` and `ip6` mechanisms declared by the `target` domain's SPF record are effectively authorized by the `domain`'s SPF record** — i.e. the `domain` must actually resolve to the same set of sending IPs that the `target` advertises.
+The check verifies that the `domain` authorizes every sending IP the `target` advertises. `SpfChecker::check` resolves both SPF chains with a single walker (`resolve`) and compares the results.
 
 A `target` is considered "covered" by `domain` if **either**:
 
-1. **Indirect coverage via include** — `domain`'s SPF chain transitively includes the `target` (e.g. `include:spf.easybill-mail.de`), so the `target`'s `ip4`/`ip6` mechanisms are implicitly inherited; **or**
-2. **Direct coverage by IP** — every `ip4` and `ip6` address listed by the `target`'s SPF record is also listed (directly or via another include) in the `domain`'s effective SPF record.
+1. **Coverage via include** — `domain`'s SPF chain includes the `target` by name (e.g. `include:spf.easybill-mail.de`), at any depth; **or**
+2. **Coverage by IP** — every `ip4`/`ip6` network in the `target`'s resolved SPF chain is contained in some `ip4`/`ip6` network of `domain`'s resolved chain. A wider network on the `domain` side covers a narrower one on the `target` side (e.g. `ip4:192.0.2.0/24` covers `ip4:192.0.2.10`), but not the other way around. IPv4 never covers IPv6. A `target` without any `ip4`/`ip6` networks is never covered by IP.
 
-The unit of comparison is the **resolved set of `ip4`/`ip6` mechanisms**, not the textual presence of an `include:` token. Mechanisms such as `a`, `mx`, `redirect`, and nested `include` must be fully expanded down to concrete IPs before the comparison.
+### Resolving a Chain (`resolve`)
 
-### Resolving Chain
+1. Fetch the SPF record of the domain (`SpnResolver::find_spf_record`). A domain with more than one SPF record fails with `MULTIPLE_SPF_RECORDS` (RFC 7208, section 4.5).
+2. Collect every pass-qualified (`+`, the default) `ip4`/`ip6` network and every pass-qualified `include:` domain. Mechanisms with `-`, `~` or `?` qualifiers are ignored, as they never authorize anything.
+3. Follow `include:` references first (in record order), then `redirect=`. A `redirect` is ignored if the record contains an `all` mechanism (RFC 7208, section 6.1).
+4. **DNS lookup budget.** At most 10 lookups for `include` and `redirect` per chain; the lookup of the domain itself does not count. When the budget is reached, resolution stops and the networks and include names collected so far are used for the comparison. This is logged, not treated as an error.
 
-1. **Resolve / verify the target SPF.** Fetch the SPF record for `target` and collect every `ip4` and `ip6` mechanism it declares. This is the reference set the `domain` must cover.
-2. **Resolve the SPF for `domain`.** Fetch the top-level SPF record for `domain`.
-3. **Match on each hit.** For every mechanism encountered while walking `domain`'s record, check:
-   - whether the entry is a direct `include:<target>` of the target domain, **or**
-   - whether the entry is an `ip4` / `ip6` mechanism that belongs to the reference set collected in step 1.
-4. **Follow `redirect` and `include` if no match yet.** When the current record does not yet satisfy coverage, descend into its `redirect=` and `include:` references and repeat the matching logic recursively.
-5. **DNS lookup budget.** Honor the SPF specification limit: **at most 10 DNS lookups** for `include` and `redirect` entries combined per evaluation. Exceeding the budget must terminate the resolution with an error rather than continuing to query.
+`a`, `mx`, `ptr` and `exists` mechanisms are **intentionally not resolved**.
 
-### Migration Status
-
-The legacy behavior is implemented in `check_direct_include` + `check_target_mechanisms`. The target behavior — full mechanism expansion down to concrete `ip4`/`ip6` sets — is **not yet implemented**. The failing test `test_target_redirect_with_ip4_ip6_mechanism_instead_of_include` in `crates/spf_checker/src/lib.rs` documents the gap and is the entry point for the migration work.
+`fallback_check` in `CheckResult` and in the API response is kept for compatibility only and is always `false`; the former string-based fallback check no longer exists.
 
 ## Development Workflow
 
@@ -103,7 +94,7 @@ The legacy behavior is implemented in `check_direct_include` + `check_target_mec
 }
 ```
 
-**Failure (`404 NOT_FOUND`)** — currently used for any resolution error (DNS failure, SPF parse failure, lookup budget exceeded). Body: `{ "error": "<message>" }`. The status mapping is intentionally coarse today; revisit if richer client-side error handling is needed.
+**Failure (`404 NOT_FOUND`)** — currently used for any resolution error (DNS failure, SPF parse failure, multiple SPF records). Body: `{ "error": "<message>" }`. The status mapping is intentionally coarse today; revisit if richer client-side error handling is needed.
 
 ## Language & Documentation
 
@@ -150,6 +141,7 @@ The legacy behavior is implemented in `check_direct_include` + `check_target_mec
 ## Dependencies & Build
 
 - `decon-spf` is pinned to a fork: `https://github.com/coreequip/rust-decon-spf`, because of an upstream bug. Revisit on dependency updates and switch back to crates.io once the fix lands upstream. The dependency lives in `crates/spf_checker/Cargo.toml`, not the binary.
+- `decon-spf` still depends on `ipnetwork` 0.20, so `Cargo.lock` contains both 0.20 and the newer version `spf_checker` uses directly. This is harmless: `ip4`/`ip6` values are taken from `decon-spf` as strings and parsed with our own `ipnetwork` version. Drop the duplicate once `decon-spf` is updated.
 - Release profile already enables LTO:
   ```toml
   [profile.release]

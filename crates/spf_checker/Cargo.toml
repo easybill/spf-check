@@ -8,7 +8,10 @@ anyhow = "1.0.102"
 async-trait = "0.1.92"
 chrono = "0.4.44"
 # TODO: Use original crate when bugfix is released
+# The commit seperating the decon-spf fork from the main repo is found here: https://github.com/Bas-Man/rust-decon-spf/compare/master...coreequip:rust-decon-spf:master
+# The original crate sets `MAX_SPF_STRING_LENGTH: usize = 512;`, when it should be 1024
 decon-spf = { git = "https://github.com/coreequip/rust-decon-spf" }
+ipnetwork = "0.21.1"
 trust-dns-resolver = { version = "0.23.2", features = ["tokio-runtime"] }
 
 [dev-dependencies]
