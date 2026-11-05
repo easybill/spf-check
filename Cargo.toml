@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/spf_checker"]
+members = ["crates/spf_checker", "crates/fake_dns"]
 default-members = [".", "crates/spf_checker"]
 
 [package]
@@ -8,6 +8,8 @@ version = "0.2.0"
 edition = "2021"
 
 [dev-dependencies]
+fake_dns = { path = "crates/fake_dns" }
+serde_json = "1.0.154"
 tower = "0.5.3"
 
 [dependencies]
