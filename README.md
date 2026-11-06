@@ -112,12 +112,12 @@ The service will listen on `0.0.0.0:8080` by default.
 
 ## Configuration
 
-| Environment variable | Default        | Description                                                                 |
-|----------------------|----------------|-----------------------------------------------------------------------------|
-| `LISTEN_ADDR`        | `0.0.0.0:8080` | Socket address to listen on, as `<ip>:<port>` (e.g. `127.0.0.1:3000`, `[::]:8080`). |
+| Environment variable | Default | Description                                                  |
+|----------------------|---------|--------------------------------------------------------------|
+| `PORT`               | `8080`  | Port to listen on. The service always binds to `0.0.0.0`.    |
 
 ```bash
-LISTEN_ADDR=127.0.0.1:3000 ./target/release/spf-check
+PORT=3000 ./target/release/spf-check
 ```
 
 ### Testing
