@@ -43,7 +43,7 @@ There is currently **no top-level `tests/` directory and no `benches/` directory
 
 ### Module Map
 
-- **`src/main.rs`** (binary `spf-check`) — server bootstrap (listen address from `LISTEN_ADDR`, default `0.0.0.0:8080`), axum router, request/response structs (`SpfCheckParams`, `SpfCheckResponse`, `ErrorResponse`), `log_message` helper, and the `TokioAsyncResolver` factory. Depends on `spf_checker` via path dependency.
+- **`src/main.rs`** (binary `spf-check`) — server bootstrap (binds `0.0.0.0` on the port from `PORT`, default `8080`), axum router, request/response structs (`SpfCheckParams`, `SpfCheckResponse`, `ErrorResponse`), `log_message` helper, and the `TokioAsyncResolver` factory. Depends on `spf_checker` via path dependency.
 - **`crates/spf_checker/src/lib.rs`** (library `spf_checker`) — `SpfChecker` struct holding an `Arc<dyn SpnResolver + Send + Sync>`. The `SpnResolver` trait abstracts DNS so tests can substitute a `MockResolver` instead of hitting real DNS. `TokioAsyncResolver` implements `SpnResolver` for production. `DNS_LOOKUP_LIMIT = 10` enforces the SPF lookup budget. SPF-specific dependencies (`decon-spf`, `ipnetwork`, `async-trait`, `trust-dns-resolver`) live here.
 - **`src/html/ui.html`** — a self-contained HTML page; no separate frontend build step.
 
@@ -71,7 +71,7 @@ Domain names are normalized (`normalize_domain`: trimmed, trailing dot removed, 
 
 ## Development Workflow
 
-- **Run the service**: `cargo run` — listens on `0.0.0.0:8080` by default; override with `LISTEN_ADDR=<ip>:<port>`.
+- **Run the service**: `cargo run` — listens on `0.0.0.0:8080` by default; override the port with `PORT=<port>`.
 - **UI**: open `http://localhost:8080/ui` in the browser.
 - **Health probe**: `GET http://localhost:8080/health` returns 200.
 - **External smoke test**: `node test-service.js` (Node.js, hits the running service).

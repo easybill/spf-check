@@ -17,8 +17,8 @@ use trust_dns_resolver::TokioAsyncResolver;
 static CARGO_PKG_NAME: &str = env!("CARGO_PKG_NAME");
 static CARGO_PKG_VERSION: &str = env!("CARGO_PKG_VERSION");
 
-const LISTEN_ADDR_ENV: &str = "LISTEN_ADDR";
-const DEFAULT_LISTEN_ADDR: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8080);
+const PORT_ENV: &str = "PORT";
+const DEFAULT_PORT: u16 = 8080;
 
 type Result<T> = anyhow::Result<T>;
 
@@ -153,17 +153,20 @@ fn app(checker: SpfChecker) -> Router {
         .with_state(checker)
 }
 
-fn parse_listen_addr(value: Option<&str>) -> Result<SocketAddr> {
+fn parse_port(value: Option<&str>) -> Result<u16> {
     match value.map(str::trim).filter(|v| !v.is_empty()) {
-        None => Ok(DEFAULT_LISTEN_ADDR),
-        Some(v) => v.parse().with_context(|| {
-            format!("Invalid {LISTEN_ADDR_ENV} \"{v}\", expected <ip>:<port> (e.g. 127.0.0.1:8080 or [::]:8080)")
-        }),
+        None => Ok(DEFAULT_PORT),
+        Some(v) => v
+            .parse()
+            .ok()
+            .filter(|&port| port != 0)
+            .with_context(|| format!("Invalid {PORT_ENV} \"{v}\", expected a port between 1 and 65535")),
     }
 }
 
 fn listen_addr_from_env() -> Result<SocketAddr> {
-    parse_listen_addr(std::env::var(LISTEN_ADDR_ENV).ok().as_deref())
+    let port = parse_port(std::env::var(PORT_ENV).ok().as_deref())?;
+    Ok(SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), port))
 }
 
 async fn serve_ui() -> Html<&'static str> {
@@ -198,28 +201,24 @@ mod tests {
     use tower::ServiceExt;
 
     #[test]
-    fn listen_addr_defaults_when_unset_or_blank() {
-        assert_eq!(parse_listen_addr(None).unwrap(), DEFAULT_LISTEN_ADDR);
-        assert_eq!(parse_listen_addr(Some("  ")).unwrap(), DEFAULT_LISTEN_ADDR);
+    fn port_defaults_when_unset_or_blank() {
+        assert_eq!(parse_port(None).unwrap(), DEFAULT_PORT);
+        assert_eq!(parse_port(Some("  ")).unwrap(), DEFAULT_PORT);
     }
 
     #[test]
-    fn listen_addr_parses_ipv4_and_ipv6() {
-        assert_eq!(
-            parse_listen_addr(Some("127.0.0.1:3000")).unwrap(),
-            SocketAddr::from(([127, 0, 0, 1], 3000))
-        );
-        assert_eq!(
-            parse_listen_addr(Some("[::1]:9000")).unwrap(),
-            "[::1]:9000".parse::<SocketAddr>().unwrap()
-        );
+    fn port_parses_valid_values() {
+        assert_eq!(parse_port(Some("3000")).unwrap(), 3000);
+        assert_eq!(parse_port(Some(" 65535 ")).unwrap(), 65535);
     }
 
     #[test]
-    fn listen_addr_rejects_invalid_values() {
-        assert!(parse_listen_addr(Some("localhost:8080")).is_err());
-        assert!(parse_listen_addr(Some("127.0.0.1")).is_err());
-        assert!(parse_listen_addr(Some("127.0.0.1:99999")).is_err());
+    fn port_rejects_invalid_values() {
+        assert!(parse_port(Some("0")).is_err());
+        assert!(parse_port(Some("65536")).is_err());
+        assert!(parse_port(Some("-1")).is_err());
+        assert!(parse_port(Some("0.0.0.0:8080")).is_err());
+        assert!(parse_port(Some("http")).is_err());
     }
 
     /// The real-world setups from the library tests: one customer including easybill by name,

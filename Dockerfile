@@ -1,45 +1,33 @@
-FROM --platform=$BUILDPLATFORM rust:1.84.1-slim-bookworm AS builder
+# syntax=docker/dockerfile:1
 
-# Install build dependencies including cross-compilation tools
-RUN apt-get update && apt-get install -y \
-    build-essential \
-    pkg-config \
-    libssl-dev \
-    musl-tools \
-    gcc-aarch64-linux-gnu \
-    && rm -rf /var/lib/apt/lists/*
+# Cross-compile on the build host (no QEMU) into a static musl binary.
+FROM --platform=$BUILDPLATFORM rust:1.99.1-slim-bookworm AS builder
 
-WORKDIR /usr/src/app
+ARG TARGETARCH
 
-# Copy the entire project
+# rust-lld ships with the toolchain and links the self-contained musl targets,
+# so no system cross-linker is needed.
+ENV CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=rust-lld \
+    CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=rust-lld
+
+WORKDIR /src
 COPY . .
 
-# Build for release with static linking and specific target
-RUN case "$TARGETPLATFORM" in \
-        "linux/amd64")  \
-            RUST_TARGET="x86_64-unknown-linux-musl" \
-            ;; \
-        "linux/arm64")  \
-            RUST_TARGET="aarch64-unknown-linux-musl" \
-            export CC_aarch64_unknown_linux_musl=aarch64-linux-gnu-gcc \
-            export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=aarch64-linux-gnu-gcc \
-            ;; \
-        *)             \
-            RUST_TARGET="x86_64-unknown-linux-musl" \
-            ;; \
-    esac && \
-    rustup target add "$RUST_TARGET" && \
-    cargo build --release --target "$RUST_TARGET"
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
+    --mount=type=cache,target=/src/target,id=spf-check-target-$TARGETARCH \
+    case "$TARGETARCH" in \
+        amd64) RUST_TARGET=x86_64-unknown-linux-musl ;; \
+        arm64) RUST_TARGET=aarch64-unknown-linux-musl ;; \
+        *) echo "Unsupported architecture: $TARGETARCH" >&2; exit 1 ;; \
+    esac \
+    && rustup target add "$RUST_TARGET" \
+    && cargo build --release --locked --target "$RUST_TARGET" \
+    && cp "target/$RUST_TARGET/release/spf-check" /spf-check
 
-# Runtime stage
 FROM scratch
 
-# Copy the build artifact from the build stage
-COPY --from=builder /usr/src/app/target/*/release/spf-check /spf-check
-
-EXPOSE 8080
+COPY --from=builder /spf-check /spf-check
 
 USER 1337
-
-# Set the startup command to run our binary
-CMD ["/spf-check"]
+ENTRYPOINT ["/spf-check"]
